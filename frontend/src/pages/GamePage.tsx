@@ -1,545 +1,405 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { DemoSong } from "../data/demoSongs";
 import { getSong, submitSession } from "../lib/api";
-import { isCorrectWord } from "../lib/gameLogic";
+
+type LyricWord = {
+  id?: string;
+  order?: number;
+  text: string;
+  ipa?: string | null;
+  pos?: string;
+  ukrainian?: string;
+};
+
+type LyricLine = {
+  id?: string;
+  order?: number;
+  startMs: number;
+  endMs: number;
+  english: string;
+  ukrainian: string;
+  words?: LyricWord[];
+};
+
+type Song = {
+  id: string;
+  title: string;
+  audioUrl: string;
+  level?: string;
+  genreUk?: string;
+  durationSec?: number;
+  descriptionUk?: string;
+  lines: LyricLine[];
+};
+
+function normalizeWord(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[.,!?;:"“”‘’()[\]{}]/g, "");
+}
+
+function splitWords(line: LyricLine): LyricWord[] {
+  if (line.words && line.words.length > 0) {
+    return [...line.words].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }
+
+  return line.english.split(/\s+/).map((text, index) => ({
+    id: `${line.id ?? "line"}_${index}`,
+    order: index,
+    text,
+    pos: "",
+    ukrainian: "",
+  }));
+}
 
 export function GamePage() {
   const { songId } = useParams();
-
-  const gameRef = useRef<HTMLElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const lineStopTimerRef = useRef<number | null>(null);
   const startedAtRef = useRef<number>(Date.now());
 
-  const [song, setSong] = useState<DemoSong | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
-
+  const [song, setSong] = useState<Song | null>(null);
   const [lineIndex, setLineIndex] = useState(0);
-  const [wordIndex, setWordIndex] = useState(0);
-  const [typed, setTyped] = useState("");
-  const [completedWords, setCompletedWords] = useState<string[]>([]);
-  const [showReview, setShowReview] = useState(false);
-  const [isComplete, setIsComplete] = useState(false);
-
+  const [typedWord, setTypedWord] = useState("");
+  const [revealedWords, setRevealedWords] = useState<string[]>([]);
   const [score, setScore] = useState(0);
+  const [correctWords, setCorrectWords] = useState(0);
   const [mistakes, setMistakes] = useState(0);
-  const [feedback, setFeedback] = useState("");
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [manualOffsetMs, setManualOffsetMs] = useState(0);
-  const [sessionSaved, setSessionSaved] = useState(false);
+  const [isLineComplete, setIsLineComplete] = useState(false);
+  const [isFinished, setIsFinished] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    if (!songId) {
-      setLoadError("Song id is missing.");
-      setIsLoading(false);
-      return;
+    let cancelled = false;
+
+    async function loadSong() {
+      if (!songId) return;
+
+      const loadedSong = (await getSong(songId)) as unknown as Song;
+
+      if (cancelled) return;
+
+      setSong({
+        ...loadedSong,
+        lines: [...loadedSong.lines].sort(
+          (a, b) => (a.order ?? 0) - (b.order ?? 0)
+        ),
+      });
     }
 
-    setIsLoading(true);
+    loadSong();
 
-    getSong(songId)
-      .then((data) => {
-        setSong(data);
-        setManualOffsetMs(data.syncOffsetMs ?? 0);
-        startedAtRef.current = Date.now();
-      })
-      .catch((error) => {
-        console.error(error);
-        setLoadError("Не вдалося завантажити пісню.");
-      })
-      .finally(() => {
-        setIsLoading(false);
-      });
+    return () => {
+      cancelled = true;
+    };
   }, [songId]);
 
-  useEffect(() => {
-    gameRef.current?.focus();
-  }, [lineIndex, showReview, isComplete, song]);
+  const currentLine = song?.lines[lineIndex] ?? null;
+
+  const currentWords = useMemo(() => {
+    return currentLine ? splitWords(currentLine) : [];
+  }, [currentLine]);
+
+  const progressPercent = song
+    ? Math.round(((lineIndex + (isFinished ? 1 : 0)) / song.lines.length) * 100)
+    : 0;
 
   useEffect(() => {
-    return () => {
-      clearLineStopTimer();
-    };
-  }, []);
+    if (!currentLine || !audioRef.current) return;
 
-  function clearLineStopTimer() {
-    if (lineStopTimerRef.current !== null) {
-      window.clearTimeout(lineStopTimerRef.current);
-      lineStopTimerRef.current = null;
-    }
-  }
-
-  if (isLoading) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-[#07070a] text-white">
-        <div className="text-slate-400">Завантаження пісні...</div>
-      </main>
-    );
-  }
-
-  if (loadError || !song) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-[#07070a] text-white">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold">Пісню не знайдено</h1>
-          <p className="mt-3 text-slate-400">{loadError}</p>
-          <Link
-            to="/songs"
-            className="mt-6 inline-flex rounded-xl bg-sky-500 px-6 py-3 font-semibold text-white"
-          >
-            Повернутися до списку
-          </Link>
-        </div>
-      </main>
-    );
-  }
-
-  const currentLine = song.lines[lineIndex];
-  const currentWord = currentLine.words[wordIndex];
-
-  const totalWords = song.lines.reduce((sum, line) => sum + line.words.length, 0);
-  const correctWords = Math.floor(score / 100);
-  const accuracy =
-    correctWords + mistakes === 0
-      ? 100
-      : Math.round((correctWords / (correctWords + mistakes)) * 100);
-
-  function stopLinePlayback() {
     const audio = audioRef.current;
-    clearLineStopTimer();
 
-    if (!audio || !currentLine) return;
+    function handleTimeUpdate() {
+      if (!currentLine || !audioRef.current) return;
 
-    audio.pause();
-    audio.currentTime = Math.max(0, (currentLine.endMs + manualOffsetMs) / 1000);
-    setIsPlaying(false);
-  }
-
-  function playCurrentLine() {
-    const audio = audioRef.current;
-    if (!audio || !currentLine) return;
-
-    clearLineStopTimer();
-
-    const startMs = Math.max(0, currentLine.startMs + manualOffsetMs);
-    const endMs = Math.max(startMs + 500, currentLine.endMs + manualOffsetMs);
-    const durationMs = endMs - startMs;
-
-    audio.currentTime = startMs / 1000;
-    audio.play();
-    setIsPlaying(true);
-
-    lineStopTimerRef.current = window.setTimeout(() => {
-      stopLinePlayback();
-    }, durationMs);
-  }
-
-  function pauseAudio() {
-    const audio = audioRef.current;
-    clearLineStopTimer();
-
-    if (!audio) return;
-
-    audio.pause();
-    setIsPlaying(false);
-  }
-
-  function handleTimeUpdate() {
-    const audio = audioRef.current;
-    if (!audio || !currentLine) return;
-
-    const endMs = currentLine.endMs + manualOffsetMs;
-
-    if (audio.currentTime * 1000 >= endMs) {
-      stopLinePlayback();
-    }
-  }
-
-  function handleKeyDown(event: React.KeyboardEvent<HTMLElement>) {
-    if (isComplete || !currentWord) return;
-
-    if (showReview) {
-      if (event.key === "Enter") {
-        goNextLine();
+      if (audioRef.current.currentTime * 1000 >= currentLine.endMs) {
+        audioRef.current.pause();
       }
+    }
+
+    audio.addEventListener("timeupdate", handleTimeUpdate);
+
+    return () => {
+      audio.removeEventListener("timeupdate", handleTimeUpdate);
+    };
+  }, [currentLine]);
+
+  async function playCurrentLine() {
+    if (!currentLine || !audioRef.current) return;
+
+    const audio = audioRef.current;
+    audio.currentTime = currentLine.startMs / 1000;
+    await audio.play();
+  }
+
+  function checkWord() {
+    if (!currentLine || currentWords.length === 0 || isLineComplete) return;
+
+    const nextWord = currentWords[revealedWords.length];
+
+    if (!nextWord) return;
+
+    if (normalizeWord(typedWord) === normalizeWord(nextWord.text)) {
+      setRevealedWords((previous) => [...previous, nextWord.text]);
+      setCorrectWords((previous) => previous + 1);
+      setScore((previous) => previous + 100);
+      setTypedWord("");
+
+      if (revealedWords.length + 1 === currentWords.length) {
+        setIsLineComplete(true);
+        audioRef.current?.pause();
+      }
+
       return;
     }
 
-    if (event.key === "Backspace") {
-      setTyped((prev) => prev.slice(0, -1));
-      setFeedback("");
-      return;
-    }
+    setMistakes((previous) => previous + 1);
+    setScore((previous) => Math.max(0, previous - 25));
+    setTypedWord("");
+  }
 
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-
-      if (isCorrectWord(typed, currentWord.text)) {
-        const nextCompleted = [...completedWords, currentWord.text];
-
-        setCompletedWords(nextCompleted);
-        setTyped("");
-        setFeedback("");
-        setScore((prev) => prev + 100);
-
-        if (wordIndex + 1 >= currentLine.words.length) {
-          pauseAudio();
-          setShowReview(true);
-        } else {
-          setWordIndex((prev) => prev + 1);
-        }
-      } else {
-        setMistakes((prev) => prev + 1);
-        setFeedback("Спробуй ще раз");
-      }
-
-      return;
+      checkWord();
     }
-
-    if (/^[a-zA-Z']$/.test(event.key)) {
-      setTyped((prev) => prev + event.key);
-      setFeedback("");
-    }
-  }
-
-  async function finishGame() {
-    pauseAudio();
-    setIsComplete(true);
-
-    const durationSec = Math.round((Date.now() - startedAtRef.current) / 1000);
-    const finalCorrectWords = Math.floor(score / 100);
-    const finalAccuracy =
-      finalCorrectWords + mistakes === 0
-        ? 100
-        : Math.round((finalCorrectWords / (finalCorrectWords + mistakes)) * 100);
-
-    if (!sessionSaved) {
-      await submitSession({
-        songId: song.id,
-        mode: "dictation",
-        score,
-        accuracy: finalAccuracy,
-        totalWords,
-        correctWords: finalCorrectWords,
-        mistakes,
-        durationSec,
-      });
-
-      setSessionSaved(true);
-    }
-  }
-
-  function goNextLine() {
-    pauseAudio();
-
-    if (lineIndex + 1 >= song.lines.length) {
-      finishGame();
-      return;
-    }
-
-    setLineIndex((prev) => prev + 1);
-    setWordIndex(0);
-    setTyped("");
-    setCompletedWords([]);
-    setShowReview(false);
-    setFeedback("");
-  }
-
-  function goPreviousLine() {
-    if (lineIndex === 0) return;
-
-    pauseAudio();
-    setLineIndex((prev) => prev - 1);
-    setWordIndex(0);
-    setTyped("");
-    setCompletedWords([]);
-    setShowReview(false);
-    setFeedback("");
   }
 
   function skipLine() {
-    pauseAudio();
-    setShowReview(true);
+    if (!currentLine) return;
+
+    const allWords = currentWords.map((word) => word.text);
+    const missingWords = Math.max(0, allWords.length - revealedWords.length);
+
+    setRevealedWords(allWords);
+    setMistakes((previous) => previous + missingWords);
+    setIsLineComplete(true);
+    audioRef.current?.pause();
   }
 
-  function restartSong() {
-    pauseAudio();
-    startedAtRef.current = Date.now();
+  async function saveResultIfNeeded(finalSong: Song) {
+    if (isSaving) return;
 
-    setLineIndex(0);
-    setWordIndex(0);
-    setTyped("");
-    setCompletedWords([]);
-    setShowReview(false);
-    setIsComplete(false);
-    setScore(0);
-    setMistakes(0);
-    setFeedback("");
-    setSessionSaved(false);
+    setIsSaving(true);
+
+    const totalWords = finalSong.lines.reduce(
+      (sum, line) => sum + splitWords(line).length,
+      0
+    );
+
+    const accuracy =
+      totalWords === 0 ? 0 : Math.round((correctWords / totalWords) * 100);
+
+    const durationSec = Math.round((Date.now() - startedAtRef.current) / 1000);
+
+    await submitSession({
+      songId: finalSong.id,
+      mode: "dictation",
+      score,
+      accuracy,
+      totalWords,
+      correctWords,
+      mistakes,
+      durationSec,
+    });
+
+    setIsSaving(false);
   }
 
-  return (
-    <main
-      ref={gameRef}
-      className="min-h-screen bg-[#07070a] text-white outline-none"
-      tabIndex={0}
-      onKeyDown={handleKeyDown}
-    >
-      <audio
-        ref={audioRef}
-        src={song.audioUrl}
-        onTimeUpdate={handleTimeUpdate}
-        onEnded={() => setIsPlaying(false)}
-      />
+  async function goToNextLine() {
+    if (!song) return;
 
-      <header className="flex h-16 items-center justify-between border-b border-white/10 px-8">
-        <div className="flex items-center gap-4">
-          <Link to="/songs" className="text-slate-400 hover:text-white">
-            ← Назад
-          </Link>
+    if (lineIndex + 1 >= song.lines.length) {
+      setIsFinished(true);
+      await saveResultIfNeeded(song);
+      return;
+    }
 
-          <strong>{song.title}</strong>
+    setLineIndex((previous) => previous + 1);
+    setTypedWord("");
+    setRevealedWords([]);
+    setIsLineComplete(false);
+  }
 
-          <span className="text-slate-400">
-            {lineIndex + 1}/{song.lines.length}
-          </span>
-        </div>
+  if (!song) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-black text-slate-300">
+        Завантаження пісні...
+      </main>
+    );
+  }
 
-        <div className="font-semibold text-sky-400">Бал {score}</div>
-      </header>
+  if (song.lines.length === 0) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-black text-slate-300">
+        <h1 className="text-3xl font-bold text-white">У пісні немає рядків</h1>
+        <Link to="/songs" className="text-sky-400 hover:text-sky-300">
+          Повернутися до списку пісень
+        </Link>
+      </main>
+    );
+  }
 
-      <div className="h-1 bg-white/10">
-        <div
-          className="h-full bg-sky-400 transition-all"
-          style={{
-            width: `${((lineIndex + 1) / song.lines.length) * 100}%`,
-          }}
-        />
-      </div>
+  if (isFinished) {
+    const totalWords = song.lines.reduce(
+      (sum, line) => sum + splitWords(line).length,
+      0
+    );
+    const accuracy =
+      totalWords === 0 ? 0 : Math.round((correctWords / totalWords) * 100);
 
-      <section className="mx-auto flex min-h-[calc(100vh-68px)] max-w-6xl flex-col items-center justify-center px-8 text-center">
-        {isComplete ? (
-          <CompletionView
-            score={score}
-            accuracy={accuracy}
-            totalWords={totalWords}
-            correctWords={correctWords}
-            mistakes={mistakes}
-            onRestart={restartSong}
-          />
-        ) : !showReview ? (
-          <>
-            <p className="mb-12 text-2xl text-slate-300">
-              {currentLine.ukrainian}
+    return (
+      <main className="min-h-screen bg-black text-white">
+        <section className="mx-auto flex min-h-screen max-w-4xl flex-col items-center justify-center px-8 text-center">
+          <div className="rounded-3xl border border-white/10 bg-white/5 p-10 shadow-2xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-300">
+              Тренування завершено
             </p>
 
-            <div className="flex flex-wrap justify-center gap-4 text-5xl font-semibold">
-              {currentLine.words.map((word, index) => {
-                const isDone = index < completedWords.length;
-                const isActive = index === wordIndex;
+            <h1 className="mt-4 text-5xl font-black">{song.title}</h1>
 
-                return (
-                  <div key={word.order} className="min-w-24">
-                    <div
-                      className={
-                        isActive
-                          ? "text-sky-300"
-                          : isDone
-                          ? "text-white"
-                          : "text-transparent"
-                      }
-                    >
-                      {isDone ? word.text : isActive ? typed || "_" : "_"}
-                    </div>
-
-                    <div
-                      className={
-                        isActive
-                          ? "mt-2 h-1 rounded-full bg-sky-400"
-                          : "mt-2 h-1 rounded-full bg-slate-500"
-                      }
-                    />
-                  </div>
-                );
-              })}
+            <div className="mt-8 grid gap-4 md:grid-cols-3">
+              <ResultCard label="Бал" value={String(score)} />
+              <ResultCard label="Точність" value={`${accuracy}%`} />
+              <ResultCard label="Помилки" value={String(mistakes)} />
             </div>
 
-            {feedback && (
-              <p className="mt-8 text-sm font-semibold text-rose-400">
-                {feedback}
-              </p>
-            )}
-
-            <div className="mt-14 flex flex-wrap items-center justify-center gap-4">
-              <button
-                onClick={playCurrentLine}
+            <div className="mt-8 flex flex-wrap justify-center gap-4">
+              <Link
+                to="/songs"
                 className="rounded-xl bg-sky-500 px-6 py-3 font-semibold text-white hover:bg-sky-600"
               >
-                {isPlaying
-                  ? "Відтворюється..."
-                  : lineIndex === 0
-                  ? "Пропустити вступ і слухати"
-                  : "Прослухати рядок"}
-              </button>
+                До списку пісень
+              </Link>
 
-              <button
-                onClick={pauseAudio}
-                className="rounded-xl border border-white/10 px-6 py-3 font-semibold text-slate-300 hover:bg-white/10"
+              <Link
+                to="/progress"
+                className="rounded-xl border border-white/10 px-6 py-3 font-semibold text-slate-200 hover:bg-white/10"
               >
-                Пауза
-              </button>
-
-              <button
-                onClick={() => setManualOffsetMs((prev) => prev - 1000)}
-                className="rounded-xl border border-white/10 px-4 py-3 font-semibold text-slate-300 hover:bg-white/10"
-              >
-                -1с
-              </button>
-
-              <button
-                onClick={() => setManualOffsetMs((prev) => prev + 1000)}
-                className="rounded-xl border border-white/10 px-4 py-3 font-semibold text-slate-300 hover:bg-white/10"
-              >
-                +1с
-              </button>
-
-              <button
-                onClick={skipLine}
-                className="rounded-xl border border-white/10 px-6 py-3 font-semibold text-slate-300 hover:bg-white/10"
-              >
-                Пропустити рядок
-              </button>
+                Переглянути прогрес
+              </Link>
             </div>
+          </div>
+        </section>
+      </main>
+    );
+  }
 
-            <p className="mt-8 text-sm text-slate-500">
-              Введи слово англійською. Натисни Space або Enter для підтвердження.
-            </p>
+  const safeCurrentLine = currentLine ?? song.lines[0];
 
-            <p className="mt-2 text-xs text-slate-600">
-              Час рядка: {Math.round((currentLine.startMs + manualOffsetMs) / 1000)}с –{" "}
-              {Math.round((currentLine.endMs + manualOffsetMs) / 1000)}с · Зсув:{" "}
-              {manualOffsetMs / 1000}с
-            </p>
-          </>
-        ) : (
-          <>
-            <div className="mb-10 flex flex-wrap justify-center gap-6">
-              {currentLine.words.map((word) => (
-                <div key={word.order} className="text-center">
-                  {word.ipa && (
-                    <div className="mb-2 rounded bg-white/10 px-2 py-1 text-sm text-slate-300">
-                      /{word.ipa}/
-                    </div>
-                  )}
+  return (
+    <main className="min-h-screen bg-black text-white">
+      <audio ref={audioRef} src={song.audioUrl} preload="metadata" />
 
-                  <div className="border-b-4 border-sky-400 text-5xl font-semibold">
-                    {word.text}
-                  </div>
+      <header className="border-b border-white/10 bg-black">
+        <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-8">
+          <div className="flex items-center gap-5">
+            <Link to="/songs" className="text-slate-400 hover:text-white">
+              ← Назад
+            </Link>
 
-                  <div className="mt-2 text-sm text-slate-400">{word.pos}</div>
+            <div className="font-bold">{song.title}</div>
 
-                  <div className="mt-1 text-sm text-slate-300">
-                    {word.ukrainian}
-                  </div>
+            <div className="text-slate-400">
+              {lineIndex + 1}/{song.lines.length}
+            </div>
+          </div>
+
+          <div className="font-bold text-sky-400">Бал {score}</div>
+        </div>
+
+        <div className="h-1 bg-white/10">
+          <div
+            className="h-full bg-sky-400 transition-all"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+      </header>
+
+      <section className="mx-auto flex min-h-[calc(100vh-84px)] max-w-6xl flex-col items-center justify-center px-8 py-12 text-center">
+        <p className="text-2xl font-semibold text-slate-300">
+          {safeCurrentLine.ukrainian}
+        </p>
+
+        <div className="mt-16 flex flex-wrap items-end justify-center gap-4">
+          {currentWords.map((word, index) => {
+            const isRevealed = index < revealedWords.length;
+
+            return (
+              <div key={`${word.text}_${index}`} className="min-w-24">
+                <div className="mb-2 min-h-7 rounded-md bg-white/10 px-3 py-1 text-sm text-slate-300">
+                  {isLineComplete && word.ipa ? word.ipa : ""}
                 </div>
-              ))}
-            </div>
 
-            <p className="text-2xl text-slate-300">{currentLine.ukrainian}</p>
+                <div className="border-b-4 border-sky-400 px-2 pb-2 text-4xl font-black">
+                  {isRevealed || isLineComplete ? word.text : ""}
+                </div>
 
-            <div className="mt-12 flex flex-wrap justify-center gap-4">
-              <button
-                onClick={goPreviousLine}
-                className="rounded-xl border border-white/10 px-8 py-4 font-semibold text-slate-300 hover:bg-white/10"
-              >
-                Попередній рядок
-              </button>
+                {isLineComplete && (
+                  <div className="mt-2 text-sm text-slate-400">
+                    <div>{word.pos}</div>
+                    <div>{word.ukrainian}</div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
 
-              <button
-                onClick={goNextLine}
-                className="rounded-xl bg-sky-500 px-8 py-4 font-semibold text-white hover:bg-sky-600"
-              >
-                Наступний рядок
-              </button>
-            </div>
-
-            <p className="mt-4 text-sm text-slate-500">
-              Можна також натиснути Enter
-            </p>
-          </>
+        {!isLineComplete && (
+          <input
+            value={typedWord}
+            onChange={(event) => setTypedWord(event.target.value)}
+            onKeyDown={handleKeyDown}
+            autoFocus
+            className="mt-12 w-full max-w-md rounded-2xl border border-white/10 bg-white/5 px-6 py-4 text-center text-2xl font-bold text-white outline-none focus:border-sky-400"
+            placeholder="Введи слово англійською"
+          />
         )}
+
+        <div className="mt-10 flex flex-wrap justify-center gap-4">
+          <button
+            onClick={playCurrentLine}
+            className="rounded-xl bg-sky-500 px-8 py-4 font-semibold text-white hover:bg-sky-600"
+          >
+            Прослухати рядок
+          </button>
+
+          {!isLineComplete && (
+            <button
+              onClick={skipLine}
+              className="rounded-xl border border-white/10 px-8 py-4 font-semibold text-slate-300 hover:bg-white/10"
+            >
+              Пропустити рядок
+            </button>
+          )}
+
+          {isLineComplete && (
+            <button
+              onClick={goToNextLine}
+              className="rounded-xl bg-sky-500 px-8 py-4 font-semibold text-white hover:bg-sky-600"
+            >
+              {lineIndex + 1 >= song.lines.length
+                ? "Завершити"
+                : "Наступний рядок"}
+            </button>
+          )}
+        </div>
+
+        <p className="mt-8 text-slate-500">
+          Введи слово англійською. Натисни Space або Enter для підтвердження.
+        </p>
       </section>
     </main>
   );
 }
 
-type CompletionViewProps = {
-  score: number;
-  accuracy: number;
-  totalWords: number;
-  correctWords: number;
-  mistakes: number;
-  onRestart: () => void;
-};
-
-function CompletionView({
-  score,
-  accuracy,
-  totalWords,
-  correctWords,
-  mistakes,
-  onRestart,
-}: CompletionViewProps) {
+function ResultCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="w-full max-w-3xl rounded-3xl border border-white/10 bg-white/[0.04] p-10 shadow-2xl">
-      <div className="text-5xl">🎉</div>
-
-      <h1 className="mt-4 text-4xl font-bold">Тренування завершено</h1>
-
-      <p className="mt-3 text-slate-400">
-        Ти пройшов пісню і повторив англійські слова в контексті.
-      </p>
-
-      <div className="mt-8 text-6xl font-black text-sky-400">{score}</div>
-
-      <div className="mt-8 grid gap-4 md:grid-cols-4">
-        <StatCard label="Точність" value={`${accuracy}%`} />
-        <StatCard label="Слів у пісні" value={String(totalWords)} />
-        <StatCard label="Правильно" value={String(correctWords)} />
-        <StatCard label="Помилок" value={String(mistakes)} />
-      </div>
-
-      <div className="mt-10 flex justify-center gap-4">
-        <button
-          onClick={onRestart}
-          className="rounded-xl bg-sky-500 px-8 py-4 font-semibold text-white hover:bg-sky-600"
-        >
-          Спробувати ще раз
-        </button>
-
-        <Link
-          to="/songs"
-          className="rounded-xl border border-white/10 px-8 py-4 font-semibold text-slate-300 hover:bg-white/10"
-        >
-          Обрати іншу пісню
-        </Link>
-      </div>
-    </div>
-  );
-}
-
-type StatCardProps = {
-  label: string;
-  value: string;
-};
-
-function StatCard({ label, value }: StatCardProps) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+    <div className="rounded-2xl bg-white/10 p-6">
       <div className="text-sm text-slate-400">{label}</div>
-      <div className="mt-2 text-2xl font-bold text-white">{value}</div>
+      <div className="mt-2 text-3xl font-black">{value}</div>
     </div>
   );
 }

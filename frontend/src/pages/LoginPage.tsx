@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 
@@ -33,27 +33,19 @@ export function LoginPage() {
 
     try {
       if (mode === "register") {
-        await register({
-          name,
-          email,
-          password,
-        });
-
+        await register({ name, email, password });
         navigate("/account");
+        return;
       }
 
       if (mode === "login") {
-        await login({
-          email,
-          password,
-        });
-
+        await login({ email, password });
         navigate("/account");
+        return;
       }
 
       if (mode === "forgot") {
         const result = await forgotPassword({ email });
-
         setNoticeText(result.message);
 
         if (result.devResetCode) {
@@ -62,15 +54,11 @@ export function LoginPage() {
         }
 
         setMode("reset");
+        return;
       }
 
       if (mode === "reset") {
-        await resetPassword({
-          email,
-          resetCode,
-          newPassword,
-        });
-
+        await resetPassword({ email, resetCode, newPassword });
         navigate("/account");
       }
     } catch (error) {
@@ -94,11 +82,9 @@ export function LoginPage() {
             <Link to="/pricing" className="hover:text-sky-600">
               Оплата
             </Link>
-
             <Link to="/songs" className="hover:text-sky-600">
               Демо-пісні
             </Link>
-
             <Link to="/design" className="hover:text-sky-600">
               Про продукт
             </Link>
@@ -112,17 +98,14 @@ export function LoginPage() {
             <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-300">
               Обліковий запис
             </p>
-
             <h1 className="mt-4 text-4xl font-black leading-tight">
               Увійди, щоб зберігати свій навчальний прогрес
             </h1>
-
             <p className="mt-5 text-lg leading-8 text-slate-300">
               Акаунт потрібен для збереження результатів тренувань, історії
               прогресу, майбутньої підписки та доступу до персоналізованих
               навчальних матеріалів.
             </p>
-
             <div className="mt-8 rounded-2xl bg-white/10 p-5 text-sm leading-7 text-slate-200">
               Відновлення пароля в MVP працює як демонстрація: код показується
               на сторінці. У production-версії код має надсилатися email-листом.
@@ -145,7 +128,6 @@ export function LoginPage() {
               >
                 Вхід
               </button>
-
               <button
                 type="button"
                 onClick={() => switchMode("register")}
@@ -171,16 +153,12 @@ export function LoginPage() {
               {mode === "register" && "Створи акаунт для збереження прогресу."}
               {mode === "forgot" &&
                 "Введи email, і система створить код відновлення."}
-              {mode === "reset" &&
-                "Введи код відновлення та новий пароль."}
+              {mode === "reset" && "Введи код відновлення та новий пароль."}
             </p>
 
             {mode === "register" && (
               <label className="mt-6 block">
-                <span className="text-sm font-semibold text-slate-700">
-                  Ім’я
-                </span>
-
+                <span className="text-sm font-semibold text-slate-700">Ім’я</span>
                 <input
                   value={name}
                   onChange={(event) => setName(event.target.value)}
@@ -191,10 +169,7 @@ export function LoginPage() {
             )}
 
             <label className="mt-6 block">
-              <span className="text-sm font-semibold text-slate-700">
-                Email
-              </span>
-
+              <span className="text-sm font-semibold text-slate-700">Email</span>
               <input
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
@@ -206,10 +181,7 @@ export function LoginPage() {
 
             {(mode === "login" || mode === "register") && (
               <label className="mt-6 block">
-                <span className="text-sm font-semibold text-slate-700">
-                  Пароль
-                </span>
-
+                <span className="text-sm font-semibold text-slate-700">Пароль</span>
                 <input
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
@@ -226,7 +198,6 @@ export function LoginPage() {
                   <span className="text-sm font-semibold text-slate-700">
                     Код відновлення
                   </span>
-
                   <input
                     value={resetCode}
                     onChange={(event) => setResetCode(event.target.value)}
@@ -234,12 +205,10 @@ export function LoginPage() {
                     placeholder="6-значний код"
                   />
                 </label>
-
                 <label className="mt-6 block">
                   <span className="text-sm font-semibold text-slate-700">
                     Новий пароль
                   </span>
-
                   <input
                     value={newPassword}
                     onChange={(event) => setNewPassword(event.target.value)}
@@ -291,7 +260,6 @@ export function LoginPage() {
                   Повернутися до входу
                 </button>
               )}
-
               {mode !== "register" && (
                 <button
                   type="button"
@@ -301,7 +269,6 @@ export function LoginPage() {
                   Зареєструватися
                 </button>
               )}
-
               {mode !== "forgot" && (
                 <button
                   type="button"
