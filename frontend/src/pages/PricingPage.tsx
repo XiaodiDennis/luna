@@ -1,13 +1,12 @@
 import { Link } from "react-router-dom";
+import { LogoLink } from "../components/LogoLink";
 
 export function PricingPage() {
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="h-20 border-b border-slate-200 bg-white">
         <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-8">
-          <Link to="/" className="text-2xl font-bold">
-            Луна
-          </Link>
+          <LogoLink />
 
           <nav className="flex items-center gap-8 text-sm font-medium">
             <Link to="/login" className="hover:text-sky-600">

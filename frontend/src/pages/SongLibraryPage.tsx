@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { getSongs } from "../lib/api";
 import type { DemoSong } from "../data/demoSongs";
+import { LogoLink } from "../components/LogoLink";
 
 export function SongLibraryPage() {
   const [songs, setSongs] = useState<DemoSong[]>([]);
@@ -35,10 +36,8 @@ export function SongLibraryPage() {
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="h-20 border-b border-slate-200 bg-white">
         <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-8">
-          <Link to="/" className="text-2xl font-bold">
-            Луна
-          </Link>
-
+          <LogoLink />
+          
           <div className="flex items-center gap-6 text-sm font-medium">
             <Link to="/generate" className="hover:text-sky-600">
               AI-генерація

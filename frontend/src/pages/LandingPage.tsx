@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { useAuth } from "../lib/auth";
+import lunaLogo from "../assets/luna-logo.png";
 
 const musicStyles = [
   "Pop Ballad",
@@ -55,8 +56,12 @@ export function LandingPage() {
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="sticky top-0 z-20 h-20 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-8">
-          <Link to="/" className="text-2xl font-bold">
-            Луна
+          <Link to="/" className="flex items-center" aria-label="Луна">
+            <img
+              src={lunaLogo}
+              alt="Луна"
+              className="h-9 w-auto"
+            />
           </Link>
 
           <nav className="flex items-center gap-8 text-sm font-medium">

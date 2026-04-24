@@ -1,9 +1,10 @@
 import { Link } from "react-router-dom";
+import { LogoLink } from "../components/LogoLink";
 
 const pillars = [
   {
     title: "Повне речення, а не ізольоване слово",
-    text: "Мінімальна стійка одиниця мовного навчання в Luna — це повне речення. Саме речення показує порядок слів, граматичну форму, значення і комунікативну ситуацію.",
+    text: "Мінімальна стійка одиниця мовного навчання в Луна — це повне речення. Саме речення показує порядок слів, граматичну форму, значення і комунікативну ситуацію.",
   },
   {
     title: "Музика як середовище повторення",
@@ -32,9 +33,8 @@ export function ProductDesignPage() {
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="h-20 border-b border-slate-200 bg-white">
         <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-8">
-          <Link to="/" className="text-2xl font-bold">
-            Луна
-          </Link>
+          
+          <LogoLink />
 
           <nav className="flex items-center gap-8 text-sm font-medium">
             <Link to="/generate" className="hover:text-sky-600">
@@ -64,7 +64,7 @@ export function ProductDesignPage() {
         </h1>
 
         <p className="mt-6 text-xl leading-9 text-slate-600">
-          Ми не позиціонуємо Luna лише як генератор музики або просту гру.
+          Ми не позиціонуємо Луна лише як генератор музики або просту гру.
           Луна — це контент-провайдер, орієнтований на редакційний контроль,
           педагогічну відповідність і перевірку безпеки контенту. Її мета —
           зробити англомовну освіту більш розслабленою, творчою і практичною.
