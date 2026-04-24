@@ -1,0 +1,76 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Song {
+  id            String          @id
+  title         String
+  artistLabel   String
+  genre         String
+  genreUk       String
+  level         String
+  durationSec   Int
+  audioUrl      String
+  descriptionUk String
+  syncOffsetMs  Int             @default(0)
+  lines         LyricLine[]
+  sessions      SessionResult[]
+  createdAt     DateTime        @default(now())
+}
+
+model LyricLine {
+  id        String      @id
+  songId    String
+  song      Song        @relation(fields: [songId], references: [id], onDelete: Cascade)
+  order     Int
+  startMs   Int
+  endMs     Int
+  english   String
+  ukrainian String
+  words     LyricWord[]
+
+  @@unique([songId, order])
+}
+
+model LyricWord {
+  id        String    @id
+  lineId    String
+  line      LyricLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  order     Int
+  text      String
+  ipa       String?
+  pos       String
+  ukrainian String
+
+  @@unique([lineId, order])
+}
+
+model SessionResult {
+  id           String   @id @default(cuid())
+  songId       String
+  song         Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+  mode         String
+  score        Int
+  accuracy     Float
+  totalWords   Int
+  correctWords Int
+  mistakes     Int
+  durationSec  Int?
+  createdAt    DateTime @default(now())
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("individual")
+  plan         String   @default("free")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}

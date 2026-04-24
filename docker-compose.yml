@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: luna-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: luna
+      POSTGRES_PASSWORD: luna
+      POSTGRES_DB: luna
+    ports:
+      - "5432:5432"
+    volumes:
+      - luna_pg_data:/var/lib/postgresql/data
+
+volumes:
+  luna_pg_data:
