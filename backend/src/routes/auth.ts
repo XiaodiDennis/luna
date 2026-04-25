@@ -7,13 +7,18 @@ const router = Router();
 
 const AUTH_SECRET = process.env.AUTH_SECRET || "luna-dev-secret";
 
-type UserRole = "student" | "teacher";
+type SafeRole = "student" | "teacher";
 
-function isAllowedRole(role: unknown): role is UserRole {
-  return role === "student" || role === "teacher";
+type JwtPayload = {
+  userId: string;
+  role: SafeRole;
+};
+
+function normalizeRole(role: unknown): SafeRole {
+  return role === "teacher" ? "teacher" : "student";
 }
 
-function createToken(userId: string, role: string) {
+function createToken(userId: string, role: SafeRole) {
   return jwt.sign(
     {
       userId,
@@ -24,6 +29,33 @@ function createToken(userId: string, role: string) {
       expiresIn: "7d",
     }
   );
+}
+
+function getAuthToken(authorizationHeader: string | undefined) {
+  if (!authorizationHeader) return null;
+
+  const [type, token] = authorizationHeader.split(" ");
+
+  if (type !== "Bearer" || !token) return null;
+
+  return token;
+}
+
+function verifyAuthToken(token: string): JwtPayload | null {
+  try {
+    const payload = jwt.verify(token, AUTH_SECRET) as Partial<JwtPayload>;
+
+    if (!payload.userId) {
+      return null;
+    }
+
+    return {
+      userId: payload.userId,
+      role: normalizeRole(payload.role),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function safeUser(user: {
@@ -40,38 +72,19 @@ function safeUser(user: {
     id: user.id,
     name: user.name,
     email: user.email,
-    role: user.role,
-    plan: user.plan,
-    level: user.level,
-    assessmentDone: user.assessmentDone,
+    role: normalizeRole(user.role),
+    plan: user.plan ?? "free",
+    level: user.level ?? null,
+    assessmentDone: Boolean(user.assessmentDone),
     createdAt: user.createdAt,
   };
 }
 
-function getAuthToken(headerValue: string | undefined) {
-  if (!headerValue) return null;
-
-  const [type, token] = headerValue.split(" ");
-
-  if (type !== "Bearer" || !token) return null;
-
-  return token;
-}
-
-function verifyToken(token: string) {
-  try {
-    return jwt.verify(token, AUTH_SECRET) as {
-      userId: string;
-      role?: string;
-    };
-  } catch {
-    return null;
-  }
-}
-
 router.post("/register", async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password } = req.body;
+
+    const requestedRole = normalizeRole(req.body.role);
 
     if (!name || !email || !password) {
       return res.status(400).json({
@@ -85,17 +98,11 @@ router.post("/register", async (req, res) => {
       });
     }
 
-    const requestedRole = role ?? "student";
-
-    if (!isAllowedRole(requestedRole)) {
-      return res.status(400).json({
-        error: 'Role must be either "student" or "teacher".',
-      });
-    }
+    const normalizedEmail = String(email).trim().toLowerCase();
 
     const existingUser = await prisma.user.findUnique({
       where: {
-        email: String(email).toLowerCase(),
+        email: normalizedEmail,
       },
     });
 
@@ -105,15 +112,16 @@ router.post("/register", async (req, res) => {
       });
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(String(password), 10);
 
     const user = await prisma.user.create({
       data: {
-        name: String(name),
-        email: String(email).toLowerCase(),
+        name: String(name).trim(),
+        email: normalizedEmail,
         passwordHash,
         role: requestedRole,
         plan: "free",
+        level: null,
         assessmentDone: false,
       },
       select: {
@@ -128,14 +136,15 @@ router.post("/register", async (req, res) => {
       },
     });
 
-    const token = createToken(user.id, user.role);
+    const userForClient = safeUser(user);
+    const token = createToken(user.id, userForClient.role);
 
-    return res.json({
+    return res.status(201).json({
       token,
-      user: safeUser(user),
+      user: userForClient,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Register error:", error);
 
     return res.status(500).json({
       error: "Failed to register user.",
@@ -153,9 +162,11 @@ router.post("/login", async (req, res) => {
       });
     }
 
+    const normalizedEmail = String(email).trim().toLowerCase();
+
     const user = await prisma.user.findUnique({
       where: {
-        email: String(email).toLowerCase(),
+        email: normalizedEmail,
       },
     });
 
@@ -165,7 +176,10 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    const passwordIsValid = await bcrypt.compare(password, user.passwordHash);
+    const passwordIsValid = await bcrypt.compare(
+      String(password),
+      user.passwordHash
+    );
 
     if (!passwordIsValid) {
       return res.status(401).json({
@@ -173,14 +187,21 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    const token = createToken(user.id, user.role);
+    /*
+      Backward compatibility:
+      Old test users may still have role = "individual".
+      safeUser() converts anything except "teacher" to "student".
+      New registrations will only save "student" or "teacher".
+    */
+    const userForClient = safeUser(user);
+    const token = createToken(user.id, userForClient.role);
 
     return res.json({
       token,
-      user: safeUser(user),
+      user: userForClient,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Login error:", error);
 
     return res.status(500).json({
       error: "Failed to log in.",
@@ -191,13 +212,15 @@ router.post("/login", async (req, res) => {
 router.get("/me", async (req, res) => {
   try {
     const token = getAuthToken(req.headers.authorization);
+
     if (!token) {
       return res.status(401).json({
         error: "Missing auth token.",
       });
     }
 
-    const payload = verifyToken(token);
+    const payload = verifyAuthToken(token);
+
     if (!payload) {
       return res.status(401).json({
         error: "Invalid auth token.",
@@ -230,7 +253,7 @@ router.get("/me", async (req, res) => {
       user: safeUser(user),
     });
   } catch (error) {
-    console.error(error);
+    console.error("Me error:", error);
 
     return res.status(500).json({
       error: "Failed to load user.",
@@ -248,12 +271,18 @@ router.post("/forgot-password", async (req, res) => {
       });
     }
 
+    const normalizedEmail = String(email).trim().toLowerCase();
+
     const user = await prisma.user.findUnique({
       where: {
-        email: String(email).toLowerCase(),
+        email: normalizedEmail,
       },
     });
 
+    /*
+      Do not reveal whether the email exists.
+      For the MVP demo, if the email exists, we still return devResetCode.
+    */
     if (!user) {
       return res.json({
         message:
@@ -276,11 +305,11 @@ router.post("/forgot-password", async (req, res) => {
 
     return res.json({
       message:
-        "Password reset code created. In the MVP demo, the code is returned directly.",
+        "Password reset code created. In this MVP demo, the code is returned directly.",
       devResetCode: resetCode,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Forgot password error:", error);
 
     return res.status(500).json({
       error: "Failed to create reset code.",
@@ -304,9 +333,11 @@ router.post("/reset-password", async (req, res) => {
       });
     }
 
+    const normalizedEmail = String(email).trim().toLowerCase();
+
     const user = await prisma.user.findUnique({
       where: {
-        email: String(email).toLowerCase(),
+        email: normalizedEmail,
       },
     });
 
@@ -324,7 +355,7 @@ router.post("/reset-password", async (req, res) => {
       });
     }
 
-    const passwordHash = await bcrypt.hash(newPassword, 10);
+    const passwordHash = await bcrypt.hash(String(newPassword), 10);
 
     await prisma.user.update({
       where: {
@@ -341,7 +372,7 @@ router.post("/reset-password", async (req, res) => {
       message: "Password updated successfully.",
     });
   } catch (error) {
-    console.error(error);
+    console.error("Reset password error:", error);
 
     return res.status(500).json({
       error: "Failed to reset password.",
