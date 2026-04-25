@@ -1,171 +1,225 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
 const API_BASE =
   import.meta.env.VITE_API_BASE?.replace(/\/$/, "") || "http://localhost:4000";
-const TOKEN_KEY = "luna_auth_token";
 
-type User = {
+const TOKEN_STORAGE_KEY = "luna_auth_token";
+
+export type UserRole = "student" | "teacher";
+
+export type LunaUser = {
   id: string;
   name: string;
   email: string;
-  role: string;
+  role: UserRole;
   plan: string;
-  createdAt: string;
+  level: string | null;
+  assessmentDone: boolean;
+  createdAt?: string;
+};
+
+type LoginPayload = {
+  email: string;
+  password: string;
+};
+
+type RegisterPayload = {
+  name: string;
+  email: string;
+  password: string;
+  role?: UserRole;
+};
+
+type ForgotPasswordPayload = {
+  email: string;
+};
+
+type ResetPasswordPayload = {
+  email: string;
+  resetCode: string;
+  newPassword: string;
+};
+
+type AuthResponse = {
+  token: string;
+  user: LunaUser;
+};
+
+type ForgotPasswordResponse = {
+  message: string;
+  devResetCode?: string;
 };
 
 type AuthContextValue = {
-  user: User | null;
+  user: LunaUser | null;
   token: string | null;
+  isAuthenticated: boolean;
   isLoading: boolean;
-  register: (payload: { name: string; email: string; password: string }) => Promise<void>;
-  login: (payload: { email: string; password: string }) => Promise<void>;
-  forgotPassword: (payload: { email: string }) => Promise<{
-    message: string;
-    devResetCode?: string;
-  }>;
-  resetPassword: (payload: {
-    email: string;
-    resetCode: string;
-    newPassword: string;
-  }) => Promise<void>;
+  login: (payload: LoginPayload) => Promise<LunaUser>;
+  register: (payload: RegisterPayload) => Promise<LunaUser>;
+  forgotPassword: (
+    payload: ForgotPasswordPayload
+  ) => Promise<ForgotPasswordResponse>;
+  resetPassword: (payload: ResetPasswordPayload) => Promise<{ message: string }>;
+  refreshUser: () => Promise<LunaUser | null>;
+  updateUser: (user: LunaUser) => void;
   logout: () => void;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-async function requestAuth(
+async function requestJson<T>(
   path: string,
-  payload: { name?: string; email: string; password?: string }
-) {
+  options: RequestInit = {}
+): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
+    ...options,
     headers: {
       "Content-Type": "application/json",
+      ...(options.headers ?? {}),
     },
-    body: JSON.stringify(payload),
   });
 
-  const data = await response.json();
+  const data = await response.json().catch(() => null);
 
   if (!response.ok) {
-    throw new Error(data.error ?? "Authentication failed.");
+    throw new Error(data?.error || "Request failed.");
   }
 
-  return data as {
-    user: User;
-    token: string;
+  return data as T;
+}
+
+function normalizeUser(rawUser: LunaUser): LunaUser {
+  return {
+    id: rawUser.id,
+    name: rawUser.name,
+    email: rawUser.email,
+    role: rawUser.role === "teacher" ? "teacher" : "student",
+    plan: rawUser.plan ?? "free",
+    level: rawUser.level ?? null,
+    assessmentDone: Boolean(rawUser.assessmentDone),
+    createdAt: rawUser.createdAt,
   };
 }
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => {
-    return localStorage.getItem(TOKEN_KEY);
+    return localStorage.getItem(TOKEN_STORAGE_KEY);
   });
+
+  const [user, setUser] = useState<LunaUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    let isMounted = true;
+  function saveAuth(authResponse: AuthResponse) {
+    const normalizedUser = normalizeUser(authResponse.user);
 
-    async function loadCurrentUser() {
-      if (!token) {
-        setIsLoading(false);
-        return;
-      }
+    localStorage.setItem(TOKEN_STORAGE_KEY, authResponse.token);
+    setToken(authResponse.token);
+    setUser(normalizedUser);
 
-      try {
-        const response = await fetch(`${API_BASE}/api/auth/me`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
+    return normalizedUser;
+  }
 
-        if (!response.ok) {
-          throw new Error("Token expired or invalid.");
-        }
+  async function login(payload: LoginPayload) {
+    const authResponse = await requestJson<AuthResponse>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
 
-        const data = await response.json();
+    return saveAuth(authResponse);
+  }
 
-        if (!isMounted) return;
-        setUser(data.user);
-      } catch {
-        localStorage.removeItem(TOKEN_KEY);
-        if (!isMounted) return;
-        setToken(null);
-        setUser(null);
-      } finally {
-        if (!isMounted) return;
-        setIsLoading(false);
-      }
+  async function register(payload: RegisterPayload) {
+    const authResponse = await requestJson<AuthResponse>("/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify({
+        ...payload,
+        role: payload.role ?? "student",
+      }),
+    });
+
+    return saveAuth(authResponse);
+  }
+
+  async function forgotPassword(payload: ForgotPasswordPayload) {
+    return requestJson<ForgotPasswordResponse>("/api/auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async function resetPassword(payload: ResetPasswordPayload) {
+    return requestJson<{ message: string }>("/api/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async function refreshUser() {
+    if (!token) {
+      setUser(null);
+      setIsLoading(false);
+      return null;
     }
 
-    loadCurrentUser();
+    try {
+      const result = await requestJson<{ user: LunaUser }>("/api/auth/me", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
-    return () => {
-      isMounted = false;
-    };
+      const normalizedUser = normalizeUser(result.user);
+      setUser(normalizedUser);
+      return normalizedUser;
+    } catch {
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      setToken(null);
+      setUser(null);
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function updateUser(nextUser: LunaUser) {
+    setUser(normalizeUser(nextUser));
+  }
+
+  function logout() {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    setToken(null);
+    setUser(null);
+  }
+
+  useEffect(() => {
+    refreshUser();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  const value = useMemo<AuthContextValue>(() => {
-    return {
+  const value = useMemo<AuthContextValue>(
+    () => ({
       user,
       token,
+      isAuthenticated: Boolean(user && token),
       isLoading,
-      async register(payload) {
-        const data = await requestAuth("/api/auth/register", payload);
-        localStorage.setItem(TOKEN_KEY, data.token);
-        setToken(data.token);
-        setUser(data.user);
-      },
-      async login(payload) {
-        const data = await requestAuth("/api/auth/login", payload);
-        localStorage.setItem(TOKEN_KEY, data.token);
-        setToken(data.token);
-        setUser(data.user);
-      },
-      async forgotPassword(payload) {
-        const response = await fetch(`${API_BASE}/api/auth/forgot-password`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payload),
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.error ?? "Failed to create reset code.");
-        }
-
-        return data;
-      },
-      async resetPassword(payload) {
-        const response = await fetch(`${API_BASE}/api/auth/reset-password`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payload),
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.error ?? "Failed to reset password.");
-        }
-
-        localStorage.setItem(TOKEN_KEY, data.token);
-        setToken(data.token);
-        setUser(data.user);
-      },
-      logout() {
-        localStorage.removeItem(TOKEN_KEY);
-        setToken(null);
-        setUser(null);
-      },
-    };
-  }, [user, token, isLoading]);
+      login,
+      register,
+      forgotPassword,
+      resetPassword,
+      refreshUser,
+      updateUser,
+      logout,
+    }),
+    [user, token, isLoading]
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
