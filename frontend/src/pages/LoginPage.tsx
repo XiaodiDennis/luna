@@ -1,15 +1,28 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useAuth } from "../lib/auth";
 import { LogoLink } from "../components/LogoLink";
+import { useAuth, type LunaUser, type UserRole } from "../lib/auth";
 
 type AuthMode = "login" | "register" | "forgot" | "reset";
+
+function getPostAuthPath(user: LunaUser) {
+  if (user.role === "teacher") {
+    return "/teacher-dashboard";
+  }
+
+  if (!user.assessmentDone) {
+    return "/assessment";
+  }
+
+  return "/student-dashboard";
+}
 
 export function LoginPage() {
   const navigate = useNavigate();
   const { login, register, forgotPassword, resetPassword } = useAuth();
 
   const [mode, setMode] = useState<AuthMode>("login");
+  const [role, setRole] = useState<UserRole>("student");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("student@example.com");
   const [password, setPassword] = useState("123456");
@@ -28,25 +41,37 @@ export function LoginPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
     setErrorText("");
     setNoticeText("");
     setIsSubmitting(true);
 
     try {
       if (mode === "register") {
-        await register({ name, email, password });
-        navigate("/account");
+        const user = await register({
+          name,
+          email,
+          password,
+          role,
+        });
+
+        navigate(getPostAuthPath(user));
         return;
       }
 
       if (mode === "login") {
-        await login({ email, password });
-        navigate("/account");
+        const user = await login({
+          email,
+          password,
+        });
+
+        navigate(getPostAuthPath(user));
         return;
       }
 
       if (mode === "forgot") {
         const result = await forgotPassword({ email });
+
         setNoticeText(result.message);
 
         if (result.devResetCode) {
@@ -59,8 +84,14 @@ export function LoginPage() {
       }
 
       if (mode === "reset") {
-        await resetPassword({ email, resetCode, newPassword });
-        navigate("/account");
+        await resetPassword({
+          email,
+          resetCode,
+          newPassword,
+        });
+
+        setNoticeText("Пароль оновлено. Тепер можна увійти.");
+        setMode("login");
       }
     } catch (error) {
       setErrorText(
@@ -75,16 +106,17 @@ export function LoginPage() {
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="h-20 border-b border-slate-200 bg-white">
         <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-8">
-          
           <LogoLink />
 
           <nav className="flex items-center gap-8 text-sm font-medium">
             <Link to="/pricing" className="hover:text-sky-600">
               Оплата
             </Link>
+
             <Link to="/songs" className="hover:text-sky-600">
               Демо-пісні
             </Link>
+
             <Link to="/design" className="hover:text-sky-600">
               Про продукт
             </Link>
@@ -98,17 +130,19 @@ export function LoginPage() {
             <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-300">
               Обліковий запис
             </p>
+
             <h1 className="mt-4 text-4xl font-black leading-tight">
-              Увійди, щоб зберігати свій навчальний прогрес
+              Обери роль і продовжуй навчання
             </h1>
+
             <p className="mt-5 text-lg leading-8 text-slate-300">
-              Акаунт потрібен для збереження результатів тренувань, історії
-              прогресу, майбутньої підписки та доступу до персоналізованих
-              навчальних матеріалів.
+              Учні проходять оцінювання рівня та тренуються з піснями. Викладачі
+              отримують доступ до AI-інструментів і майбутньої аналітики учнів.
             </p>
+
             <div className="mt-8 rounded-2xl bg-white/10 p-5 text-sm leading-7 text-slate-200">
-              Відновлення пароля в MVP працює як демонстрація: код показується
-              на сторінці. У production-версії код має надсилатися email-листом.
+              AI-генерація призначена для викладачів. Учні працюють із
+              педагогічно перевіреними матеріалами.
             </div>
           </aside>
 
@@ -128,6 +162,7 @@ export function LoginPage() {
               >
                 Вхід
               </button>
+
               <button
                 type="button"
                 onClick={() => switchMode("register")}
@@ -150,26 +185,67 @@ export function LoginPage() {
 
             <p className="mt-2 text-slate-500">
               {mode === "login" && "Введи email і пароль, щоб продовжити."}
-              {mode === "register" && "Створи акаунт для збереження прогресу."}
+              {mode === "register" &&
+                "Обери тип акаунта: учень або викладач."}
               {mode === "forgot" &&
                 "Введи email, і система створить код відновлення."}
               {mode === "reset" && "Введи код відновлення та новий пароль."}
             </p>
 
             {mode === "register" && (
-              <label className="mt-6 block">
-                <span className="text-sm font-semibold text-slate-700">Ім’я</span>
-                <input
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-sky-400"
-                  placeholder="Наприклад: Олена"
-                />
-              </label>
+              <>
+                <div className="mt-6 grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setRole("student")}
+                    className={
+                      role === "student"
+                        ? "rounded-2xl border-2 border-sky-500 bg-sky-50 p-5 text-left"
+                        : "rounded-2xl border border-slate-200 p-5 text-left hover:border-sky-300"
+                    }
+                  >
+                    <div className="text-lg font-black">Учень</div>
+                    <div className="mt-2 text-sm leading-6 text-slate-500">
+                      Тренування, оцінювання рівня, прогрес.
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setRole("teacher")}
+                    className={
+                      role === "teacher"
+                        ? "rounded-2xl border-2 border-sky-500 bg-sky-50 p-5 text-left"
+                        : "rounded-2xl border border-slate-200 p-5 text-left hover:border-sky-300"
+                    }
+                  >
+                    <div className="text-lg font-black">Викладач</div>
+                    <div className="mt-2 text-sm leading-6 text-slate-500">
+                      AI-інструменти та аналітика учнів.
+                    </div>
+                  </button>
+                </div>
+
+                <label className="mt-6 block">
+                  <span className="text-sm font-semibold text-slate-700">
+                    Ім’я
+                  </span>
+
+                  <input
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-sky-400"
+                    placeholder="Наприклад: Олена"
+                  />
+                </label>
+              </>
             )}
 
             <label className="mt-6 block">
-              <span className="text-sm font-semibold text-slate-700">Email</span>
+              <span className="text-sm font-semibold text-slate-700">
+                Email
+              </span>
+
               <input
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
@@ -181,7 +257,10 @@ export function LoginPage() {
 
             {(mode === "login" || mode === "register") && (
               <label className="mt-6 block">
-                <span className="text-sm font-semibold text-slate-700">Пароль</span>
+                <span className="text-sm font-semibold text-slate-700">
+                  Пароль
+                </span>
+
                 <input
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
@@ -198,6 +277,7 @@ export function LoginPage() {
                   <span className="text-sm font-semibold text-slate-700">
                     Код відновлення
                   </span>
+
                   <input
                     value={resetCode}
                     onChange={(event) => setResetCode(event.target.value)}
@@ -205,10 +285,12 @@ export function LoginPage() {
                     placeholder="6-значний код"
                   />
                 </label>
+
                 <label className="mt-6 block">
                   <span className="text-sm font-semibold text-slate-700">
                     Новий пароль
                   </span>
+
                   <input
                     value={newPassword}
                     onChange={(event) => setNewPassword(event.target.value)}
@@ -260,6 +342,7 @@ export function LoginPage() {
                   Повернутися до входу
                 </button>
               )}
+
               {mode !== "register" && (
                 <button
                   type="button"
@@ -269,6 +352,7 @@ export function LoginPage() {
                   Зареєструватися
                 </button>
               )}
+
               {mode !== "forgot" && (
                 <button
                   type="button"

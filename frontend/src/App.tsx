@@ -2,6 +2,9 @@ import { Suspense, lazy } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "./lib/auth";
 import { AIGeneratePage } from "./pages/AIGeneratePage";
+import { AssessmentPage } from "./pages/AssessmentPage";
+import { StudentDashboardPage } from "./pages/StudentDashboardPage";
+import { TeacherDashboardPage } from "./pages/TeacherDashboardPage";
 
 const LandingPage = lazy(() =>
   import("./pages/LandingPage").then((module) => ({
@@ -73,6 +76,9 @@ export default function App() {
             <Route path="/songs" element={<SongLibraryPage />} />
             <Route path="/play/:songId" element={<GamePage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="/assessment" element={<AssessmentPage />} />
+            <Route path="/student-dashboard" element={<StudentDashboardPage />} />
+            <Route path="/teacher-dashboard" element={<TeacherDashboardPage />} />
           </Routes>
         </Suspense>
       </BrowserRouter>
