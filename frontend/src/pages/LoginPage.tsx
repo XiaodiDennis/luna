@@ -10,7 +10,7 @@ function getPostAuthPath(user: LunaUser) {
     return "/teacher-dashboard";
   }
 
-  if (!user.assessmentDone) {
+  if (user.role === "student" && !user.assessmentDone) {
     return "/assessment";
   }
 
