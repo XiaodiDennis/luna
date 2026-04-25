@@ -1,106 +1,39 @@
-import crypto from "crypto";
 import { Router } from "express";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma";
 
-export const authRouter = Router();
+const router = Router();
 
-const AUTH_SECRET = process.env.AUTH_SECRET ?? "luna-dev-secret-change-me";
+const AUTH_SECRET = process.env.AUTH_SECRET || "luna-dev-secret";
 
-// MVP-only in-memory reset code store.
-// In production, reset codes should be stored with expiry in DB or Redis and sent by email.
-const passwordResetCodes = new Map<
-  string,
-  {
-    code: string;
-    expiresAt: number;
-  }
->();
+type UserRole = "student" | "teacher";
 
-function base64Url(input: string | Buffer) {
-  return Buffer.from(input)
-    .toString("base64")
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
+function isAllowedRole(role: unknown): role is UserRole {
+  return role === "student" || role === "teacher";
 }
 
-function hashPassword(password: string) {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
-  return `${salt}:${hash}`;
-}
-
-function verifyPassword(password: string, storedHash: string) {
-  const [salt, hash] = storedHash.split(":");
-
-  if (!salt || !hash) {
-    return false;
-  }
-
-  const candidateHash = crypto.scryptSync(password, salt, 64).toString("hex");
-
-  return crypto.timingSafeEqual(
-    Buffer.from(hash, "hex"),
-    Buffer.from(candidateHash, "hex")
+function createToken(userId: string, role: string) {
+  return jwt.sign(
+    {
+      userId,
+      role,
+    },
+    AUTH_SECRET,
+    {
+      expiresIn: "7d",
+    }
   );
 }
 
-function createToken(userId: string) {
-  const payload = {
-    userId,
-    issuedAt: Date.now(),
-  };
-
-  const payloadEncoded = base64Url(JSON.stringify(payload));
-  const signature = crypto
-    .createHmac("sha256", AUTH_SECRET)
-    .update(payloadEncoded)
-    .digest("base64url");
-
-  return `${payloadEncoded}.${signature}`;
-}
-
-function verifyToken(token: string) {
-  const [payloadEncoded, signature] = token.split(".");
-
-  if (!payloadEncoded || !signature) {
-    return null;
-  }
-
-  const expectedSignature = crypto
-    .createHmac("sha256", AUTH_SECRET)
-    .update(payloadEncoded)
-    .digest("base64url");
-
-  if (signature !== expectedSignature) {
-    return null;
-  }
-
-  try {
-    const payload = JSON.parse(
-      Buffer.from(payloadEncoded, "base64url").toString("utf-8")
-    );
-
-    return typeof payload.userId === "string" ? payload.userId : null;
-  } catch {
-    return null;
-  }
-}
-
-function normalizeEmail(email: unknown) {
-  return String(email ?? "").trim().toLowerCase();
-}
-
-function createResetCode() {
-  return String(Math.floor(100000 + Math.random() * 900000));
-}
-
-function publicUser(user: {
+function safeUser(user: {
   id: string;
   name: string;
   email: string;
   role: string;
   plan: string;
+  level: string | null;
+  assessmentDone: boolean;
   createdAt: Date;
 }) {
   return {
@@ -109,129 +42,255 @@ function publicUser(user: {
     email: user.email,
     role: user.role,
     plan: user.plan,
+    level: user.level,
+    assessmentDone: user.assessmentDone,
     createdAt: user.createdAt,
   };
 }
 
-authRouter.post("/register", async (req, res) => {
+function getAuthToken(headerValue: string | undefined) {
+  if (!headerValue) return null;
+
+  const [type, token] = headerValue.split(" ");
+
+  if (type !== "Bearer" || !token) return null;
+
+  return token;
+}
+
+function verifyToken(token: string) {
   try {
-    const name = String(req.body.name ?? "").trim();
-    const email = normalizeEmail(req.body.email);
-    const password = String(req.body.password ?? "");
+    return jwt.verify(token, AUTH_SECRET) as {
+      userId: string;
+      role?: string;
+    };
+  } catch {
+    return null;
+  }
+}
+
+router.post("/register", async (req, res) => {
+  try {
+    const { name, email, password, role } = req.body;
 
     if (!name || !email || !password) {
-      return res
-        .status(400)
-        .json({ error: "Name, email, and password are required." });
-    }
-
-    if (password.length < 6) {
-      return res
-        .status(400)
-        .json({ error: "Password must be at least 6 characters." });
-    }
-
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (existingUser) {
-      return res.status(409).json({ error: "This email is already registered." });
-    }
-
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email,
-        passwordHash: hashPassword(password),
-        role: "individual",
-        plan: "free",
-      },
-    });
-
-    res.status(201).json({
-      user: publicUser(user),
-      token: createToken(user.id),
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Registration failed." });
-  }
-});
-
-authRouter.post("/login", async (req, res) => {
-  try {
-    const email = normalizeEmail(req.body.email);
-    const password = String(req.body.password ?? "");
-
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and password are required." });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (!user || !verifyPassword(password, user.passwordHash)) {
-      return res.status(401).json({ error: "Invalid email or password." });
-    }
-
-    res.json({
-      user: publicUser(user),
-      token: createToken(user.id),
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Login failed." });
-  }
-});
-
-authRouter.post("/forgot-password", async (req, res) => {
-  try {
-    const email = normalizeEmail(req.body.email);
-
-    if (!email) {
-      return res.status(400).json({ error: "Email is required." });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email },
-    });
-
-    // Do not reveal whether email exists in a real product.
-    // For MVP/demo, return a dev reset code only when the user exists.
-    if (!user) {
-      return res.json({
-        ok: true,
-        message:
-          "Якщо цей email зареєстрований, інструкцію для відновлення пароля буде надіслано.",
+      return res.status(400).json({
+        error: "Name, email, and password are required.",
       });
     }
 
-    const code = createResetCode();
+    if (String(password).length < 6) {
+      return res.status(400).json({
+        error: "Password must be at least 6 characters.",
+      });
+    }
 
-    passwordResetCodes.set(email, {
-      code,
-      expiresAt: Date.now() + 10 * 60 * 1000,
+    const requestedRole = role ?? "student";
+
+    if (!isAllowedRole(requestedRole)) {
+      return res.status(400).json({
+        error: 'Role must be either "student" or "teacher".',
+      });
+    }
+
+    const existingUser = await prisma.user.findUnique({
+      where: {
+        email: String(email).toLowerCase(),
+      },
     });
 
-    res.json({
-      ok: true,
-      message:
-        "Код відновлення створено. У production-версії він має надсилатися email-листом.",
-      devResetCode: code,
+    if (existingUser) {
+      return res.status(409).json({
+        error: "This email is already registered.",
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    const user = await prisma.user.create({
+      data: {
+        name: String(name),
+        email: String(email).toLowerCase(),
+        passwordHash,
+        role: requestedRole,
+        plan: "free",
+        assessmentDone: false,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        plan: true,
+        level: true,
+        assessmentDone: true,
+        createdAt: true,
+      },
+    });
+
+    const token = createToken(user.id, user.role);
+
+    return res.json({
+      token,
+      user: safeUser(user),
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Failed to create reset code." });
+
+    return res.status(500).json({
+      error: "Failed to register user.",
+    });
   }
 });
 
-authRouter.post("/reset-password", async (req, res) => {
+router.post("/login", async (req, res) => {
   try {
-    const email = normalizeEmail(req.body.email);
-    const resetCode = String(req.body.resetCode ?? "").trim();
-    const newPassword = String(req.body.newPassword ?? "");
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        error: "Email and password are required.",
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: {
+        email: String(email).toLowerCase(),
+      },
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        error: "Invalid email or password.",
+      });
+    }
+
+    const passwordIsValid = await bcrypt.compare(password, user.passwordHash);
+
+    if (!passwordIsValid) {
+      return res.status(401).json({
+        error: "Invalid email or password.",
+      });
+    }
+
+    const token = createToken(user.id, user.role);
+
+    return res.json({
+      token,
+      user: safeUser(user),
+    });
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      error: "Failed to log in.",
+    });
+  }
+});
+
+router.get("/me", async (req, res) => {
+  try {
+    const token = getAuthToken(req.headers.authorization);
+    if (!token) {
+      return res.status(401).json({
+        error: "Missing auth token.",
+      });
+    }
+
+    const payload = verifyToken(token);
+    if (!payload) {
+      return res.status(401).json({
+        error: "Invalid auth token.",
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: {
+        id: payload.userId,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        plan: true,
+        level: true,
+        assessmentDone: true,
+        createdAt: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        error: "User not found.",
+      });
+    }
+
+    return res.json({
+      user: safeUser(user),
+    });
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      error: "Failed to load user.",
+    });
+  }
+});
+
+router.post("/forgot-password", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        error: "Email is required.",
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: {
+        email: String(email).toLowerCase(),
+      },
+    });
+
+    if (!user) {
+      return res.json({
+        message:
+          "If this email exists, a password reset code has been created.",
+      });
+    }
+
+    const resetCode = String(Math.floor(100000 + Math.random() * 900000));
+    const resetCodeExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+    await prisma.user.update({
+      where: {
+        id: user.id,
+      },
+      data: {
+        resetCode,
+        resetCodeExpiresAt,
+      },
+    });
+
+    return res.json({
+      message:
+        "Password reset code created. In the MVP demo, the code is returned directly.",
+      devResetCode: resetCode,
+    });
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      error: "Failed to create reset code.",
+    });
+  }
+});
+
+router.post("/reset-password", async (req, res) => {
+  try {
+    const { email, resetCode, newPassword } = req.body;
 
     if (!email || !resetCode || !newPassword) {
       return res.status(400).json({
@@ -239,66 +298,55 @@ authRouter.post("/reset-password", async (req, res) => {
       });
     }
 
-    if (newPassword.length < 6) {
-      return res
-        .status(400)
-        .json({ error: "New password must be at least 6 characters." });
-    }
-
-    const resetRecord = passwordResetCodes.get(email);
-
-    if (
-      !resetRecord ||
-      resetRecord.code !== resetCode ||
-      resetRecord.expiresAt < Date.now()
-    ) {
-      return res.status(400).json({ error: "Invalid or expired reset code." });
-    }
-
-    const user = await prisma.user.update({
-      where: { email },
-      data: {
-        passwordHash: hashPassword(newPassword),
-      },
-    });
-
-    passwordResetCodes.delete(email);
-
-    res.json({
-      ok: true,
-      message: "Пароль оновлено.",
-      user: publicUser(user),
-      token: createToken(user.id),
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to reset password." });
-  }
-});
-
-authRouter.get("/me", async (req, res) => {
-  try {
-    const authHeader = req.headers.authorization ?? "";
-    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-    const userId = verifyToken(token);
-
-    if (!userId) {
-      return res.status(401).json({ error: "Unauthorized." });
+    if (String(newPassword).length < 6) {
+      return res.status(400).json({
+        error: "New password must be at least 6 characters.",
+      });
     }
 
     const user = await prisma.user.findUnique({
-      where: { id: userId },
+      where: {
+        email: String(email).toLowerCase(),
+      },
     });
 
-    if (!user) {
-      return res.status(401).json({ error: "Unauthorized." });
+    if (!user || !user.resetCode || !user.resetCodeExpiresAt) {
+      return res.status(400).json({
+        error: "Invalid or expired reset code.",
+      });
     }
 
-    res.json({
-      user: publicUser(user),
+    const resetCodeIsExpired = user.resetCodeExpiresAt.getTime() < Date.now();
+
+    if (resetCodeIsExpired || user.resetCode !== String(resetCode)) {
+      return res.status(400).json({
+        error: "Invalid or expired reset code.",
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+
+    await prisma.user.update({
+      where: {
+        id: user.id,
+      },
+      data: {
+        passwordHash,
+        resetCode: null,
+        resetCodeExpiresAt: null,
+      },
+    });
+
+    return res.json({
+      message: "Password updated successfully.",
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Failed to load account." });
+
+    return res.status(500).json({
+      error: "Failed to reset password.",
+    });
   }
 });
+
+export default router;
