@@ -3,37 +3,20 @@ import { demoSongs, type DemoSong } from "../data/demoSongs";
 const API_BASE =
   import.meta.env.VITE_API_BASE?.replace(/\/$/, "") || "http://localhost:4000";
 
-export async function getSongs(): Promise<DemoSong[]> {
-  try {
-    const response = await fetch(`${API_BASE}/api/songs`);
+const TOKEN_STORAGE_KEY = "luna_auth_token";
 
-    if (!response.ok) {
-      throw new Error(`Failed to fetch songs: ${response.status}`);
-    }
+export type ProgressSummary = {
+  totalSessions: number;
+  totalScore: number;
+  totalWords: number;
+  totalCorrectWords: number;
+  totalMistakes: number;
+  totalDurationSec: number;
+  bestScore: number;
+  averageAccuracy: number;
+};
 
-    return await response.json();
-  } catch (error) {
-    console.warn("Using local demo songs because API failed:", error);
-    return demoSongs;
-  }
-}
-
-export async function getSong(songId: string): Promise<DemoSong> {
-  try {
-    const response = await fetch(`${API_BASE}/api/songs/${songId}`);
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch song: ${response.status}`);
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.warn("Using local demo song because API failed:", error);
-    return demoSongs.find((song) => song.id === songId) ?? demoSongs[0];
-  }
-}
-
-export async function submitSession(payload: {
+export type SessionPayload = {
   songId: string;
   mode: string;
   score: number;
@@ -42,192 +25,154 @@ export async function submitSession(payload: {
   correctWords: number;
   mistakes: number;
   durationSec?: number;
-}) {
+};
+
+export type AssessmentAnswer = {
+  questionId: string;
+  selectedAnswer: string;
+  correctAnswer?: string;
+  isCorrect?: boolean;
+};
+
+export type AssessmentSubmitPayload = {
+  answers: AssessmentAnswer[];
+};
+
+export type GenerationPreviewPayload = {
+  level: string;
+  style: string;
+};
+
+const emptyProgressSummary: ProgressSummary = {
+  totalSessions: 0,
+  totalScore: 0,
+  totalWords: 0,
+  totalCorrectWords: 0,
+  totalMistakes: 0,
+  totalDurationSec: 0,
+  bestScore: 0,
+  averageAccuracy: 0,
+};
+
+function getToken() {
+  return localStorage.getItem(TOKEN_STORAGE_KEY);
+}
+
+function getAuthHeaders(): Record<string, string> {
+  const token = getToken();
+
+  if (!token) {
+    return {};
+  }
+
+  return {
+    Authorization: `Bearer ${token}`,
+  };
+}
+
+async function readJsonResponse<T>(response: Response): Promise<T> {
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const message =
+      data && typeof data.error === "string"
+        ? data.error
+        : `Request failed with status ${response.status}`;
+
+    throw new Error(message);
+  }
+
+  return data as T;
+}
+
+async function getJson<T>(path: string, withAuth = false): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: {
+      ...(withAuth ? getAuthHeaders() : {}),
+    },
+  });
+
+  return readJsonResponse<T>(response);
+}
+
+async function postJson<T>(
+  path: string,
+  payload: unknown,
+  withAuth = false
+): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(withAuth ? getAuthHeaders() : {}),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  return readJsonResponse<T>(response);
+}
+
+export async function getSongs(): Promise<DemoSong[]> {
   try {
-    const response = await fetch(`${API_BASE}/api/sessions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
+    return await getJson<DemoSong[]>("/api/songs");
+  } catch (error) {
+    console.warn("Using local demo songs because API failed:", error);
+    return demoSongs;
+  }
+}
 
-    if (!response.ok) {
-      throw new Error(`Failed to submit session: ${response.status}`);
-    }
+export async function getSong(songId: string): Promise<DemoSong> {
+  try {
+    return await getJson<DemoSong>(`/api/songs/${songId}`);
+  } catch (error) {
+    console.warn("Using local demo song because API failed:", error);
+    return demoSongs.find((song) => song.id === songId) ?? demoSongs[0];
+  }
+}
 
-    return await response.json();
+export async function submitSession(payload: SessionPayload): Promise<any> {
+  try {
+    return await postJson<any>("/api/sessions", payload, true);
   } catch (error) {
     console.warn("Session result was not saved:", error);
     return null;
   }
 }
 
-export async function getSessionResults() {
+export async function getSessionResults(): Promise<any[]> {
   try {
-    const response = await fetch(`${API_BASE}/api/sessions`);
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch session results: ${response.status}`);
-    }
-
-    return await response.json();
+    return await getJson<any[]>("/api/sessions", true);
   } catch (error) {
     console.warn("Using empty session result list because API failed:", error);
     return [];
   }
 }
 
-export async function getProgressSummary() {
+export async function getProgressSummary(): Promise<ProgressSummary> {
   try {
-    const response = await fetch(`${API_BASE}/api/sessions/summary`);
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch progress summary: ${response.status}`);
-    }
-
-    return await response.json();
+    return await getJson<ProgressSummary>("/api/sessions/summary", true);
   } catch (error) {
     console.warn("Using empty progress summary because API failed:", error);
-    return {
-      totalSessions: 0,
-      totalScore: 0,
-      totalWords: 0,
-      totalCorrectWords: 0,
-      totalMistakes: 0,
-      totalDurationSec: 0,
-      bestScore: 0,
-      averageAccuracy: 0,
-    };
+    return emptyProgressSummary;
   }
 }
 
-export async function getGenerationOptions() {
-  try {
-    const response = await fetch(`${API_BASE}/api/generation/options`);
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch generation options: ${response.status}`);
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.warn("Using local generation options because API failed:", error);
-
-    return {
-      levels: [
-        {
-          level: "A1",
-          label: "Початковий рівень",
-          suggestion: "Дуже короткі рядки, Present Simple, щоденні предмети.",
-        },
-        {
-          level: "A2",
-          label: "Базовий рівень",
-          suggestion:
-            "Прості історії, базовий минулий час, подорожі та міське життя.",
-        },
-        {
-          level: "B1",
-          label: "Середній рівень",
-          suggestion: "Довші речення, емоції, спогади та особисті плани.",
-        },
-        {
-          level: "B2",
-          label: "Вище середнього",
-          suggestion:
-            "Більш природні тексти, фразові дієслова, абстрактні ідеї.",
-        },
-        {
-          level: "C1",
-          label: "Просунутий рівень",
-          suggestion: "Складні образи, ідіоми, культурні посилання.",
-        },
-        {
-          level: "C2",
-          label: "Вільне володіння",
-          suggestion: "Поетична мова, тонкі відтінки значення, складна лексика.",
-        },
-      ],
-      musicStyles: ["Acoustic Pop", "Indie Folk", "Country", "Pop Ballad"],
-      allowedThemes: ["ранок", "місто", "подорож", "Дніпро", "Київ", "Карпати"],
-      recommendedThemeByLevel: {
-        A1: "ранок",
-        A2: "місто",
-        B1: "подорож",
-        B2: "Дніпро",
-        C1: "Київ",
-        C2: "Карпати",
-      },
-      policy: {
-        userCanChooseLevel: true,
-        userCanChooseStyle: true,
-        userCanChooseTheme: false,
-        reason:
-          "Учень може обрати рівень і стиль музики. Тему контролює бекенд.",
-      },
-    };
-  }
+export async function submitAssessment(
+  payload: AssessmentSubmitPayload
+): Promise<any> {
+  return postJson<any>("/api/assessment/submit", payload, true);
 }
 
-export async function createGenerationPreview(payload: {
-  level: string;
-  style: string;
-}) {
-  try {
-    const response = await fetch(`${API_BASE}/api/generation/preview`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
+export async function getLatestAssessment(): Promise<any> {
+  return getJson<any>("/api/assessment/latest", true);
+}
 
-    if (!response.ok) {
-      throw new Error(`Failed to create generation preview: ${response.status}`);
-    }
+export async function getGenerationOptions(): Promise<any> {
+  return getJson<any>("/api/generation/options", true);
+}
 
-    return await response.json();
-  } catch (error) {
-    console.warn("Using local generation preview because API failed:", error);
-
-    const themeByLevel: Record<string, string> = {
-      A1: "ранок",
-      A2: "місто",
-      B1: "подорож",
-      B2: "Дніпро",
-      C1: "Київ",
-      C2: "Карпати",
-    };
-
-    return {
-      id: `local_mock_${Date.now()}`,
-      status: "mock_preview_only",
-      message:
-        "Це локальний попередній план. Реальна генерація музики поки не виконується.",
-      selectedByUser: {
-        level: payload.level,
-        style: payload.style,
-      },
-      controlledByBackend: {
-        theme: themeByLevel[payload.level] ?? "місто",
-        vocabularyLimit: "контрольована лексика відповідно до рівня",
-        grammarFocus: ["sentence practice", "listening", "typing"],
-        lineCount: 12,
-        safetyReviewRequired: true,
-        editorialReviewRequired: true,
-        pedagogicalReviewRequired: true,
-      },
-      plannedSong: {
-        workingTitle: `${themeByLevel[payload.level] ?? "місто"} · ${
-          payload.style
-        }`,
-        learnerLevel: payload.level,
-        interfaceLanguage: "Українська",
-        learningLanguage: "Англійська",
-        expectedOutput:
-          "Оригінальна англомовна пісня з українськими поясненнями та вправою.",
-      },
-    };
-  }
+export async function createGenerationPreview(
+  payload: GenerationPreviewPayload
+): Promise<any> {
+  return postJson<any>("/api/generation/preview", payload, true);
 }
