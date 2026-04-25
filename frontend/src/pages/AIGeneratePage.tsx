@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { createGenerationPreview, getGenerationOptions } from "../lib/api";
 import { LogoLink } from "../components/LogoLink";
+import { createGenerationPreview, getGenerationOptions } from "../lib/api";
+import { useAuth } from "../lib/auth";
 
 type EnglishLevelOption = {
   level: string;
@@ -57,7 +58,11 @@ function getStyleSuggestion(style: string) {
     return "Добрий універсальний вибір для рівнів A2-B2.";
   }
 
-  if (style.includes("Jazz") || style.includes("Soul") || style.includes("Spoken")) {
+  if (
+    style.includes("Jazz") ||
+    style.includes("Soul") ||
+    style.includes("Spoken")
+  ) {
     return "Краще підходить для рівнів B2-C2, бо ритм і формулювання можуть бути складнішими.";
   }
 
@@ -69,15 +74,31 @@ function getStyleSuggestion(style: string) {
 }
 
 export function AIGeneratePage() {
+  const { user, isLoading: isAuthLoading } = useAuth();
+
   const [options, setOptions] = useState<GenerationOptions | null>(null);
   const [selectedLevel, setSelectedLevel] = useState("A2");
   const [selectedStyle, setSelectedStyle] = useState("Pop Ballad");
   const [isLoading, setIsLoading] = useState(true);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [preview, setPreview] = useState<GenerationPreview | null>(null);
+  const [errorText, setErrorText] = useState("");
 
   useEffect(() => {
+    if (isAuthLoading) {
+      return;
+    }
+
+    if (!user || user.role !== "teacher") {
+      setOptions(null);
+      setIsLoading(false);
+      return;
+    }
+
     let isMounted = true;
+
+    setIsLoading(true);
+    setErrorText("");
 
     getGenerationOptions()
       .then((data: GenerationOptions) => {
@@ -95,6 +116,14 @@ export function AIGeneratePage() {
           setSelectedStyle(hasPopBallad ? "Pop Ballad" : data.musicStyles[0]);
         }
       })
+      .catch((error) => {
+        console.error(error);
+
+        if (!isMounted) return;
+
+        setErrorText("Не вдалося завантажити налаштування AI-генерації.");
+        setOptions(null);
+      })
       .finally(() => {
         if (!isMounted) return;
         setIsLoading(false);
@@ -103,7 +132,7 @@ export function AIGeneratePage() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [isAuthLoading, user]);
 
   const selectedLevelInfo = useMemo(() => {
     return options?.levels.find((item) => item.level === selectedLevel);
@@ -111,7 +140,12 @@ export function AIGeneratePage() {
 
   const lockedTheme = useMemo(() => {
     if (!options) return "місто";
-    return options.recommendedThemeByLevel[selectedLevel] ?? options.allowedThemes[0] ?? "місто";
+
+    return (
+      options.recommendedThemeByLevel[selectedLevel] ??
+      options.allowedThemes[0] ??
+      "місто"
+    );
   }, [options, selectedLevel]);
 
   const styleSuggestion = useMemo(() => {
@@ -120,14 +154,121 @@ export function AIGeneratePage() {
 
   async function handleCreatePreview() {
     setIsPreviewLoading(true);
+    setErrorText("");
 
-    const result = await createGenerationPreview({
-      level: selectedLevel,
-      style: selectedStyle,
-    });
+    try {
+      const result = await createGenerationPreview({
+        level: selectedLevel,
+        style: selectedStyle,
+      });
 
-    setPreview(result);
-    setIsPreviewLoading(false);
+      setPreview(result);
+    } catch (error) {
+      console.error(error);
+      setErrorText("Не вдалося створити план генерації.");
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  }
+
+  if (isAuthLoading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-600">
+        Перевірка акаунта...
+      </main>
+    );
+  }
+
+  if (!user) {
+    return (
+      <main className="min-h-screen bg-slate-50 text-slate-950">
+        <header className="h-20 border-b border-slate-200 bg-white">
+          <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-8">
+            <LogoLink />
+
+            <Link
+              to="/login"
+              className="rounded-xl bg-sky-500 px-5 py-3 font-semibold text-white hover:bg-sky-600"
+            >
+              Увійти
+            </Link>
+          </div>
+        </header>
+
+        <section className="mx-auto flex min-h-[calc(100vh-80px)] max-w-3xl flex-col items-center justify-center px-8 text-center">
+          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-600">
+            Teacher-only
+          </p>
+
+          <h1 className="mt-4 text-5xl font-black">
+            AI-інструменти доступні лише викладачам
+          </h1>
+
+          <p className="mt-5 text-lg leading-8 text-slate-600">
+            Увійдіть у викладацький акаунт, щоб використовувати AI-генерацію
+            навчальних пісень.
+          </p>
+
+          <Link
+            to="/login"
+            className="mt-8 rounded-xl bg-sky-500 px-6 py-4 font-semibold text-white hover:bg-sky-600"
+          >
+            Перейти до входу
+          </Link>
+        </section>
+      </main>
+    );
+  }
+
+  if (user.role !== "teacher") {
+    return (
+      <main className="min-h-screen bg-slate-50 text-slate-950">
+        <header className="h-20 border-b border-slate-200 bg-white">
+          <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-8">
+            <LogoLink />
+
+            <Link
+              to="/student-dashboard"
+              className="rounded-xl bg-sky-500 px-5 py-3 font-semibold text-white hover:bg-sky-600"
+            >
+              Кабінет учня
+            </Link>
+          </div>
+        </header>
+
+        <section className="mx-auto flex min-h-[calc(100vh-80px)] max-w-3xl flex-col items-center justify-center px-8 text-center">
+          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-600">
+            Обмежений доступ
+          </p>
+
+          <h1 className="mt-4 text-5xl font-black">
+            AI-генерація призначена для викладачів
+          </h1>
+
+          <p className="mt-5 text-lg leading-8 text-slate-600">
+            Учні працюють із готовими або призначеними навчальними матеріалами.
+            Генерація тем і навчального контенту залишається під контролем
+            викладача та продукту.
+          </p>
+
+          <div className="mt-8 flex flex-wrap justify-center gap-4">
+            <Link
+              to="/student-dashboard"
+              className="rounded-xl bg-sky-500 px-6 py-4 font-semibold text-white hover:bg-sky-600"
+            >
+              Повернутися до кабінету учня
+            </Link>
+
+            <Link
+              to="/songs"
+              className="rounded-xl border border-slate-200 bg-white px-6 py-4 font-semibold text-slate-800 hover:bg-slate-100"
+            >
+              Перейти до пісень
+            </Link>
+          </div>
+        </section>
+      </main>
+    );
   }
 
   if (isLoading) {
@@ -140,16 +281,37 @@ export function AIGeneratePage() {
 
   if (!options) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-950">
-        <div className="text-center">
-          <h1 className="text-3xl font-bold">Не вдалося завантажити налаштування</h1>
+      <main className="min-h-screen bg-slate-50 text-slate-950">
+        <header className="h-20 border-b border-slate-200 bg-white">
+          <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-8">
+            <LogoLink />
+
+            <Link
+              to="/teacher-dashboard"
+              className="rounded-xl bg-sky-500 px-5 py-3 font-semibold text-white hover:bg-sky-600"
+            >
+              Кабінет викладача
+            </Link>
+          </div>
+        </header>
+
+        <section className="mx-auto flex min-h-[calc(100vh-80px)] max-w-3xl flex-col items-center justify-center px-8 text-center">
+          <h1 className="text-4xl font-black">
+            Не вдалося завантажити налаштування
+          </h1>
+
+          <p className="mt-4 text-lg leading-8 text-slate-600">
+            {errorText ||
+              "Перевірте підключення до бекенду та повторіть спробу."}
+          </p>
+
           <Link
-            to="/"
-            className="mt-6 inline-flex rounded-xl bg-sky-500 px-6 py-3 font-semibold text-white"
+            to="/teacher-dashboard"
+            className="mt-8 inline-flex rounded-xl bg-sky-500 px-6 py-3 font-semibold text-white hover:bg-sky-600"
           >
-            На головну
+            До кабінету викладача
           </Link>
-        </div>
+        </section>
       </main>
     );
   }
@@ -158,10 +320,13 @@ export function AIGeneratePage() {
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="h-20 border-b border-slate-200 bg-white">
         <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-8">
-          
           <LogoLink />
 
           <nav className="flex items-center gap-8 text-sm font-medium">
+            <Link to="/teacher-dashboard" className="hover:text-sky-600">
+              Кабінет викладача
+            </Link>
+
             <Link to="/design" className="hover:text-sky-600">
               Про продукт
             </Link>
@@ -183,24 +348,27 @@ export function AIGeneratePage() {
       <section className="mx-auto flex max-w-7xl flex-col items-center px-8 py-14">
         <div className="max-w-4xl text-center">
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-500">
-            ШІ-генерація музики
+            AI-інструменти для викладача
           </p>
 
           <h1 className="mt-4 text-5xl font-black tracking-tight md:text-6xl">
-            Спроєктуй навчальну пісню для свого рівня англійської
+            Спроєктуй навчальну пісню для рівня учнів
           </h1>
 
           <p className="mx-auto mt-6 max-w-3xl text-lg leading-8 text-slate-600">
-            Це full-stack макет генерації без витрат API-токенів. Учень обирає
-            рівень і музичний стиль, а бекенд повертає контрольовану тему,
-            навчальні обмеження та план майбутньої пісні.
+            Це full-stack макет генерації без витрат API-токенів. Викладач
+            обирає рівень і музичний стиль, а бекенд повертає контрольовану
+            тему, навчальні обмеження та план майбутньої пісні.
           </p>
         </div>
 
         <div className="mt-12 grid w-full gap-8 lg:grid-cols-[1.15fr_0.85fr]">
           <section className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
             <div className="text-center">
-              <h2 className="text-2xl font-bold">1. Обери рівень англійської</h2>
+              <h2 className="text-2xl font-bold">
+                1. Обери рівень англійської
+              </h2>
+
               <p className="mt-2 text-slate-500">
                 Луна налаштовує лексику, довжину речень і складність граматики.
               </p>
@@ -236,9 +404,13 @@ export function AIGeneratePage() {
             </div>
 
             <div className="mt-10 text-center">
-              <h2 className="text-2xl font-bold">2. Обери музичний стиль</h2>
+              <h2 className="text-2xl font-bold">
+                2. Обери музичний стиль
+              </h2>
+
               <p className="mt-2 text-slate-500">
-                Назви стилів залишаються англійською, бо це стандартні музичні жанри.
+                Назви стилів залишаються англійською, бо це стандартні музичні
+                жанри.
               </p>
             </div>
 
@@ -279,13 +451,21 @@ export function AIGeneratePage() {
               </p>
             </div>
 
+            {errorText && (
+              <div className="mt-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-700">
+                {errorText}
+              </div>
+            )}
+
             <div className="mt-8 flex justify-center">
               <button
                 onClick={handleCreatePreview}
                 disabled={isPreviewLoading}
                 className="rounded-xl bg-sky-500 px-8 py-4 font-semibold text-white shadow-md hover:bg-sky-600 disabled:bg-slate-300"
               >
-                {isPreviewLoading ? "Створення плану..." : "Створити план генерації"}
+                {isPreviewLoading
+                  ? "Створення плану..."
+                  : "Створити план генерації"}
               </button>
             </div>
           </section>
@@ -327,15 +507,28 @@ export function AIGeneratePage() {
             {preview && (
               <div className="mt-8 rounded-2xl border border-sky-200 bg-sky-50 p-5 text-slate-800">
                 <p className="text-lg font-bold">План генерації створено</p>
+
                 <p className="mt-2 text-sm leading-6 text-slate-600">
                   {preview.message}
                 </p>
 
                 <div className="mt-5 space-y-3 text-sm">
-                  <SummaryRow label="Робоча назва" value={preview.plannedSong.workingTitle} />
-                  <SummaryRow label="Рівень" value={preview.selectedByUser.level} />
-                  <SummaryRow label="Стиль" value={preview.selectedByUser.style} />
-                  <SummaryRow label="Тема з бекенду" value={preview.controlledByBackend.theme} />
+                  <SummaryRow
+                    label="Робоча назва"
+                    value={preview.plannedSong.workingTitle}
+                  />
+                  <SummaryRow
+                    label="Рівень"
+                    value={preview.selectedByUser.level}
+                  />
+                  <SummaryRow
+                    label="Стиль"
+                    value={preview.selectedByUser.style}
+                  />
+                  <SummaryRow
+                    label="Тема з бекенду"
+                    value={preview.controlledByBackend.theme}
+                  />
                   <SummaryRow
                     label="Лексичне обмеження"
                     value={preview.controlledByBackend.vocabularyLimit}
@@ -354,9 +547,18 @@ export function AIGeneratePage() {
                 </div>
 
                 <div className="mt-5 grid gap-3 text-sm sm:grid-cols-3">
-                  <StatusBadge label="Редакційна перевірка" active={preview.controlledByBackend.editorialReviewRequired} />
-                  <StatusBadge label="Педагогічна перевірка" active={preview.controlledByBackend.pedagogicalReviewRequired} />
-                  <StatusBadge label="Безпека контенту" active={preview.controlledByBackend.safetyReviewRequired} />
+                  <StatusBadge
+                    label="Редакційна перевірка"
+                    active={preview.controlledByBackend.editorialReviewRequired}
+                  />
+                  <StatusBadge
+                    label="Педагогічна перевірка"
+                    active={preview.controlledByBackend.pedagogicalReviewRequired}
+                  />
+                  <StatusBadge
+                    label="Безпека контенту"
+                    active={preview.controlledByBackend.safetyReviewRequired}
+                  />
                 </div>
               </div>
             )}
