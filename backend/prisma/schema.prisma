@@ -8,7 +8,7 @@ datasource db {
 }
 
 model Song {
-  id            String          @id
+  id            String @id
   title         String
   artistLabel   String
   genre         String
@@ -17,30 +17,35 @@ model Song {
   durationSec   Int
   audioUrl      String
   descriptionUk String
-  syncOffsetMs  Int             @default(0)
-  lines         LyricLine[]
-  sessions      SessionResult[]
-  createdAt     DateTime        @default(now())
+  syncOffsetMs  Int    @default(0)
+
+  lines    LyricLine[]
+  sessions SessionResult[]
+
+  createdAt DateTime @default(now())
 }
 
 model LyricLine {
-  id        String      @id
-  songId    String
-  song      Song        @relation(fields: [songId], references: [id], onDelete: Cascade)
+  id     String @id
+  songId String
+  song   Song   @relation(fields: [songId], references: [id], onDelete: Cascade)
+
   order     Int
   startMs   Int
   endMs     Int
   english   String
   ukrainian String
-  words     LyricWord[]
+
+  words LyricWord[]
 
   @@unique([songId, order])
 }
 
 model LyricWord {
-  id        String    @id
-  lineId    String
-  line      LyricLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  id     String    @id
+  lineId String
+  line   LyricLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
+
   order     Int
   text      String
   ipa       String?
@@ -50,10 +55,79 @@ model LyricWord {
   @@unique([lineId, order])
 }
 
+model User {
+  id           String @id @default(cuid())
+  name         String
+  email        String @unique
+  passwordHash String
+
+  // user role:
+  // "student" = individual/student user
+  // "teacher" = teacher user
+  role String @default("student")
+
+  // payment plan:
+  // "free", "individual_monthly", "individual_annual", "enterprise"
+  plan String @default("free")
+
+  // student learning profile
+  level          String?
+  assessmentDone Boolean @default(false)
+
+  // optional password reset support
+  resetCode          String?
+  resetCodeExpiresAt DateTime?
+
+  sessions          SessionResult[]
+  assessmentResults AssessmentResult[]
+
+  teacherStudentsAsTeacher TeacherStudent[] @relation("TeacherStudentsAsTeacher")
+  teacherStudentsAsStudent TeacherStudent[] @relation("TeacherStudentsAsStudent")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AssessmentResult {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  score       Int
+  level       String
+  answersJson String
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model TeacherStudent {
+  id String @id @default(cuid())
+
+  teacherId String
+  teacher   User   @relation("TeacherStudentsAsTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+
+  studentId String
+  student   User   @relation("TeacherStudentsAsStudent", fields: [studentId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([teacherId, studentId])
+  @@index([teacherId])
+  @@index([studentId])
+}
+
 model SessionResult {
-  id           String   @id @default(cuid())
-  songId       String
-  song         Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+  id String @id @default(cuid())
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  songId String
+  song   Song   @relation(fields: [songId], references: [id], onDelete: Cascade)
+
   mode         String
   score        Int
   accuracy     Float
@@ -61,16 +135,9 @@ model SessionResult {
   correctWords Int
   mistakes     Int
   durationSec  Int?
-  createdAt    DateTime @default(now())
-}
 
-model User {
-  id           String   @id @default(cuid())
-  name         String
-  email        String   @unique
-  passwordHash String
-  role         String   @default("individual")
-  plan         String   @default("free")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([songId])
 }
