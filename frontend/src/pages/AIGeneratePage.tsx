@@ -73,6 +73,29 @@ function getStyleSuggestion(style: string) {
   return "Може використовуватися для більшості рівнів, якщо лексика контролюється.";
 }
 
+function TeacherOnlyHeader({
+  buttonTo,
+  buttonText,
+}: {
+  buttonTo: string;
+  buttonText: string;
+}) {
+  return (
+    <header className="h-20 border-b border-slate-200 bg-white">
+      <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-8">
+        <LogoLink />
+
+        <Link
+          to={buttonTo}
+          className="rounded-xl bg-sky-500 px-5 py-3 font-semibold text-white hover:bg-sky-600"
+        >
+          {buttonText}
+        </Link>
+      </div>
+    </header>
+  );
+}
+
 export function AIGeneratePage() {
   const { user, isLoading: isAuthLoading } = useAuth();
 
@@ -85,9 +108,7 @@ export function AIGeneratePage() {
   const [errorText, setErrorText] = useState("");
 
   useEffect(() => {
-    if (isAuthLoading) {
-      return;
-    }
+    if (isAuthLoading) return;
 
     if (!user || user.role !== "teacher") {
       setOptions(null);
@@ -101,19 +122,23 @@ export function AIGeneratePage() {
     setErrorText("");
 
     getGenerationOptions()
-      .then((data: GenerationOptions) => {
+      .then((data) => {
+        const typedData = data as GenerationOptions;
+
         if (!isMounted) return;
 
-        setOptions(data);
+        setOptions(typedData);
 
-        if (data.levels.length > 0) {
-          const hasA2 = data.levels.some((item) => item.level === "A2");
-          setSelectedLevel(hasA2 ? "A2" : data.levels[0].level);
+        if (typedData.levels.length > 0) {
+          const hasA2 = typedData.levels.some((item) => item.level === "A2");
+          setSelectedLevel(hasA2 ? "A2" : typedData.levels[0].level);
         }
 
-        if (data.musicStyles.length > 0) {
-          const hasPopBallad = data.musicStyles.includes("Pop Ballad");
-          setSelectedStyle(hasPopBallad ? "Pop Ballad" : data.musicStyles[0]);
+        if (typedData.musicStyles.length > 0) {
+          const hasPopBallad = typedData.musicStyles.includes("Pop Ballad");
+          setSelectedStyle(
+            hasPopBallad ? "Pop Ballad" : typedData.musicStyles[0]
+          );
         }
       })
       .catch((error) => {
@@ -121,8 +146,8 @@ export function AIGeneratePage() {
 
         if (!isMounted) return;
 
-        setErrorText("Не вдалося завантажити налаштування AI-генерації.");
         setOptions(null);
+        setErrorText("Не вдалося завантажити налаштування AI-генерації.");
       })
       .finally(() => {
         if (!isMounted) return;
@@ -157,10 +182,10 @@ export function AIGeneratePage() {
     setErrorText("");
 
     try {
-      const result = await createGenerationPreview({
+      const result = (await createGenerationPreview({
         level: selectedLevel,
         style: selectedStyle,
-      });
+      })) as GenerationPreview;
 
       setPreview(result);
     } catch (error) {
@@ -182,18 +207,7 @@ export function AIGeneratePage() {
   if (!user) {
     return (
       <main className="min-h-screen bg-slate-50 text-slate-950">
-        <header className="h-20 border-b border-slate-200 bg-white">
-          <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-8">
-            <LogoLink />
-
-            <Link
-              to="/login"
-              className="rounded-xl bg-sky-500 px-5 py-3 font-semibold text-white hover:bg-sky-600"
-            >
-              Увійти
-            </Link>
-          </div>
-        </header>
+        <TeacherOnlyHeader buttonTo="/login" buttonText="Увійти" />
 
         <section className="mx-auto flex min-h-[calc(100vh-80px)] max-w-3xl flex-col items-center justify-center px-8 text-center">
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-600">
@@ -223,18 +237,10 @@ export function AIGeneratePage() {
   if (user.role !== "teacher") {
     return (
       <main className="min-h-screen bg-slate-50 text-slate-950">
-        <header className="h-20 border-b border-slate-200 bg-white">
-          <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-8">
-            <LogoLink />
-
-            <Link
-              to="/student-dashboard"
-              className="rounded-xl bg-sky-500 px-5 py-3 font-semibold text-white hover:bg-sky-600"
-            >
-              Кабінет учня
-            </Link>
-          </div>
-        </header>
+        <TeacherOnlyHeader
+          buttonTo="/student-dashboard"
+          buttonText="Кабінет учня"
+        />
 
         <section className="mx-auto flex min-h-[calc(100vh-80px)] max-w-3xl flex-col items-center justify-center px-8 text-center">
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-600">
@@ -282,18 +288,10 @@ export function AIGeneratePage() {
   if (!options) {
     return (
       <main className="min-h-screen bg-slate-50 text-slate-950">
-        <header className="h-20 border-b border-slate-200 bg-white">
-          <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-8">
-            <LogoLink />
-
-            <Link
-              to="/teacher-dashboard"
-              className="rounded-xl bg-sky-500 px-5 py-3 font-semibold text-white hover:bg-sky-600"
-            >
-              Кабінет викладача
-            </Link>
-          </div>
-        </header>
+        <TeacherOnlyHeader
+          buttonTo="/teacher-dashboard"
+          buttonText="Кабінет викладача"
+        />
 
         <section className="mx-auto flex min-h-[calc(100vh-80px)] max-w-3xl flex-col items-center justify-center px-8 text-center">
           <h1 className="text-4xl font-black">
@@ -553,7 +551,9 @@ export function AIGeneratePage() {
                   />
                   <StatusBadge
                     label="Педагогічна перевірка"
-                    active={preview.controlledByBackend.pedagogicalReviewRequired}
+                    active={
+                      preview.controlledByBackend.pedagogicalReviewRequired
+                    }
                   />
                   <StatusBadge
                     label="Безпека контенту"
