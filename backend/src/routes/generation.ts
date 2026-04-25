@@ -1,90 +1,66 @@
 import { Router } from "express";
+import jwt from "jsonwebtoken";
 
-export const generationRouter = Router();
+const router = Router();
+
+const AUTH_SECRET = process.env.AUTH_SECRET || "luna-dev-secret";
 
 const levels = [
   {
     level: "A1",
     label: "Початковий рівень",
-    suggestion: "Дуже короткі рядки, Present Simple, щоденні предмети.",
+    suggestion: "Дуже короткі речення, базова лексика, простий теперішній час.",
   },
   {
     level: "A2",
     label: "Базовий рівень",
-    suggestion: "Прості історії, базовий минулий час, подорожі та міське життя.",
+    suggestion: "Прості історії, знайомі теми, базові минулі та майбутні форми.",
   },
   {
     level: "B1",
     label: "Середній рівень",
-    suggestion: "Довші речення, емоції, спогади та особисті плани.",
+    suggestion: "Довші речення, особистий досвід, подорожі, навчання і плани.",
   },
   {
     level: "B2",
     label: "Вище середнього",
-    suggestion: "Більш природні тексти, фразові дієслова, абстрактні ідеї.",
+    suggestion: "Природніші формулювання, складніші зв’язки між ідеями.",
   },
   {
     level: "C1",
     label: "Просунутий рівень",
-    suggestion: "Складні образи, ідіоми, культурні посилання.",
+    suggestion: "Абстрактні теми, ідіоми, культурні посилання, точні відтінки значення.",
   },
   {
     level: "C2",
     label: "Вільне володіння",
-    suggestion: "Поетична мова, тонкі відтінки значення, складна лексика.",
+    suggestion: "Складна образність, стилістична гнучкість і майже нативна складність.",
   },
 ];
 
 const musicStyles = [
-  "Acoustic Pop",
-  "Indie Folk",
-  "Country",
   "Pop Ballad",
-  "Synth Pop",
-  "Dream Pop",
-  "Soft Rock",
+  "Indie Folk",
+  "Acoustic Pop",
   "Lo-fi",
+  "Piano Ballad",
+  "Classroom Chant",
+  "Soft Rock",
+  "Cinematic",
+  "Children Song",
   "Jazz Pop",
   "Soul",
-  "R&B",
-  "Piano Ballad",
-  "Ukulele Pop",
-  "Children's Song",
-  "Classroom Chant",
-  "Musical Theatre",
-  "EDM Pop",
-  "House",
-  "Disco Pop",
-  "Reggae Pop",
-  "Latin Pop",
-  "Afro Pop",
-  "Orchestral Pop",
-  "Cinematic",
-  "Ambient",
-  "Folk Rock",
-  "Bluegrass",
-  "Teen Pop",
-  "Euro Pop",
-  "City Pop",
-  "Soft Rap",
   "Spoken Word",
-  "Holiday Song",
-  "Travel Song",
+  "Ambient",
 ];
 
 const allowedThemes = [
-  "Карпати",
-  "Дніпро",
-  "Львів",
-  "Київ",
-  "Одеса",
-  "школа",
-  "подорож",
-  "погода",
-  "місто",
-  "кава",
   "ранок",
-  "вечір",
+  "місто",
+  "подорож",
+  "Дніпро",
+  "Київ",
+  "Карпати",
 ];
 
 const recommendedThemeByLevel: Record<string, string> = {
@@ -96,34 +72,56 @@ const recommendedThemeByLevel: Record<string, string> = {
   C2: "Карпати",
 };
 
-function getLineCountByLevel(level: string) {
-  if (level === "A1") return 8;
-  if (level === "A2") return 12;
-  if (level === "B1") return 16;
-  if (level === "B2") return 20;
-  return 24;
+function getAuthToken(headerValue: string | undefined) {
+  if (!headerValue) return null;
+
+  const [type, token] = headerValue.split(" ");
+
+  if (type !== "Bearer" || !token) return null;
+
+  return token;
 }
 
-function getVocabularyLimitByLevel(level: string) {
-  if (level === "A1") return "дуже проста базова лексика";
-  if (level === "A2") return "проста лексика з базовими дієсловами";
-  if (level === "B1") return "повсякденна лексика з емоціями та спогадами";
-  if (level === "B2") return "природні фрази, фразові дієслова та образність";
-  if (level === "C1") return "складніші формулювання, ідіоми та культурні натяки";
-  return "поетична лексика, тонкі відтінки значення та складний синтаксис";
+function verifyToken(token: string) {
+  try {
+    return jwt.verify(token, AUTH_SECRET) as {
+      userId: string;
+      role?: string;
+    };
+  } catch {
+    return null;
+  }
 }
 
-function getGrammarFocusByLevel(level: string) {
-  if (level === "A1") return ["Present Simple", "to be", "basic nouns"];
-  if (level === "A2") return ["Past Simple", "basic adjectives", "prepositions of place"];
-  if (level === "B1") return ["Present Perfect", "future plans", "because / when clauses"];
-  if (level === "B2") return ["phrasal verbs", "conditionals", "relative clauses"];
-  if (level === "C1") return ["idiomatic expressions", "modality", "complex clauses"];
-  return ["nuance", "metaphor", "advanced discourse markers"];
+function requireTeacher(req: any, res: any, next: any) {
+  const token = getAuthToken(req.headers.authorization);
+
+  if (!token) {
+    return res.status(401).json({
+      error: "Missing auth token.",
+    });
+  }
+
+  const payload = verifyToken(token);
+
+  if (!payload?.userId) {
+    return res.status(401).json({
+      error: "Invalid auth token.",
+    });
+  }
+
+  if (payload.role !== "teacher") {
+    return res.status(403).json({
+      error: "AI generation tools are available only for teacher users.",
+    });
+  }
+
+  req.user = payload;
+  return next();
 }
 
-generationRouter.get("/options", (_req, res) => {
-  res.json({
+router.get("/options", requireTeacher, (_req, res) => {
+  return res.json({
     levels,
     musicStyles,
     allowedThemes,
@@ -133,52 +131,50 @@ generationRouter.get("/options", (_req, res) => {
       userCanChooseStyle: true,
       userCanChooseTheme: false,
       reason:
-        "Учень може обрати рівень і стиль музики. Тему, безпеку словника, відповідність віку та культурні посилання контролює бекенд.",
+        "Викладач може обрати рівень і музичний стиль. Тему контролює бекенд, щоб зберегти педагогічну відповідність і безпеку контенту.",
     },
   });
 });
 
-generationRouter.post("/preview", (req, res) => {
-  const requestedLevel = String(req.body.level ?? "A2");
-  const requestedStyle = String(req.body.style ?? "Pop Ballad");
+router.post("/preview", requireTeacher, (req, res) => {
+  const level = String(req.body.level ?? "A2");
+  const style = String(req.body.style ?? "Pop Ballad");
 
-  const safeLevel = levels.some((item) => item.level === requestedLevel)
-    ? requestedLevel
+  const selectedLevel = levels.some((item) => item.level === level)
+    ? level
     : "A2";
 
-  const safeStyle = musicStyles.includes(requestedStyle)
-    ? requestedStyle
-    : "Pop Ballad";
+  const selectedStyle = musicStyles.includes(style) ? style : "Pop Ballad";
 
-  const backendTheme = recommendedThemeByLevel[safeLevel] ?? "місто";
-  const levelInfo = levels.find((item) => item.level === safeLevel) ?? levels[1];
+  const theme = recommendedThemeByLevel[selectedLevel] ?? "місто";
 
-  res.json({
-    id: `mock_${Date.now()}`,
+  return res.json({
+    id: `teacher_preview_${Date.now()}`,
     status: "mock_preview_only",
     message:
-      "Це лише попередній план генерації. Реальна генерація музики, тексту та аудіо поки не виконується.",
+      "Це попередній план AI-генерації для викладача. Реальна генерація музики поки не виконується.",
     selectedByUser: {
-      level: safeLevel,
-      style: safeStyle,
+      level: selectedLevel,
+      style: selectedStyle,
     },
     controlledByBackend: {
-      theme: backendTheme,
-      allowedThemes,
-      vocabularyLimit: getVocabularyLimitByLevel(safeLevel),
-      grammarFocus: getGrammarFocusByLevel(safeLevel),
-      lineCount: getLineCountByLevel(safeLevel),
+      theme,
+      vocabularyLimit: "контрольована лексика відповідно до рівня учнів",
+      grammarFocus: ["sentence practice", "listening", "typing", "teacher review"],
+      lineCount: 12,
       safetyReviewRequired: true,
       editorialReviewRequired: true,
       pedagogicalReviewRequired: true,
     },
     plannedSong: {
-      workingTitle: `${backendTheme} · ${safeStyle}`,
-      learnerLevel: levelInfo.label,
+      workingTitle: `${theme} · ${selectedStyle}`,
+      learnerLevel: selectedLevel,
       interfaceLanguage: "Українська",
       learningLanguage: "Англійська",
       expectedOutput:
-        "Оригінальна англомовна пісня з українськими поясненнями, таймлайном рядків, словниковими одиницями та вправою на введення слів.",
+        "Оригінальна англомовна пісня з українськими поясненнями та вправою для учнів.",
     },
   });
 });
+
+export default router;

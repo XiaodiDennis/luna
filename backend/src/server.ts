@@ -6,6 +6,7 @@ import { sessionsRouter } from "./routes/sessions";
 import { generationRouter } from "./routes/generation";
 import { authRouter } from "./routes/auth";
 import assessmentRouter from "./routes/assessment";
+import generationRouter from "./routes/generation";
 
 dotenv.config();
 
@@ -27,6 +28,7 @@ app.use("/api/sessions", sessionsRouter);
 app.use("/api/generation", generationRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/assessment", assessmentRouter);
+app.use("/api/generation", generationRouter);
 
 app.listen(port, () => {
   console.log(`Luna API running on http://localhost:${port}`);
