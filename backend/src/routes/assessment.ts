@@ -34,7 +34,7 @@ function verifyToken(token: string) {
   }
 }
 
-async function getCurrentUserId(authorizationHeader: string | undefined) {
+async function getCurrentUser(authorizationHeader: string | undefined) {
   const token = getAuthToken(authorizationHeader);
 
   if (!token) return null;
@@ -43,16 +43,11 @@ async function getCurrentUserId(authorizationHeader: string | undefined) {
 
   if (!payload?.userId) return null;
 
-  return payload.userId;
-}
-
-function calculateLevel(scorePercent: number) {
-  if (scorePercent <= 20) return "A1";
-  if (scorePercent <= 40) return "A2";
-  if (scorePercent <= 60) return "B1";
-  if (scorePercent <= 75) return "B2";
-  if (scorePercent <= 90) return "C1";
-  return "C2";
+  return prisma.user.findUnique({
+    where: {
+      id: payload.userId,
+    },
+  });
 }
 
 function normalizeAnswers(rawAnswers: unknown): AssessmentAnswer[] {
@@ -74,7 +69,7 @@ function normalizeAnswers(rawAnswers: unknown): AssessmentAnswer[] {
   });
 }
 
-function calculateScoreFromAnswers(answers: AssessmentAnswer[]) {
+function calculateScore(answers: AssessmentAnswer[]) {
   if (answers.length === 0) {
     return {
       correctCount: 0,
@@ -88,7 +83,7 @@ function calculateScoreFromAnswers(answers: AssessmentAnswer[]) {
       return answer.isCorrect;
     }
 
-    if (answer.correctAnswer === undefined) {
+    if (!answer.correctAnswer) {
       return false;
     }
 
@@ -108,31 +103,28 @@ function calculateScoreFromAnswers(answers: AssessmentAnswer[]) {
   };
 }
 
+function calculateLevel(scorePercent: number) {
+  if (scorePercent <= 20) return "A1";
+  if (scorePercent <= 40) return "A2";
+  if (scorePercent <= 60) return "B1";
+  if (scorePercent <= 75) return "B2";
+  if (scorePercent <= 90) return "C1";
+  return "C2";
+}
+
 router.post("/submit", async (req, res) => {
   try {
-    const userId = await getCurrentUserId(req.headers.authorization);
+    const user = await getCurrentUser(req.headers.authorization);
 
-    if (!userId) {
+    if (!user) {
       return res.status(401).json({
         error: "Missing or invalid auth token.",
       });
     }
 
-    const user = await prisma.user.findUnique({
-      where: {
-        id: userId,
-      },
-    });
-
-    if (!user) {
-      return res.status(404).json({
-        error: "User not found.",
-      });
-    }
-
-    if (user.role !== "student") {
+    if (user.role === "teacher") {
       return res.status(403).json({
-        error: "Only student users need to complete assessment.",
+        error: "Teachers do not need student assessment.",
       });
     }
 
@@ -144,14 +136,12 @@ router.post("/submit", async (req, res) => {
       });
     }
 
-    const { correctCount, totalCount, scorePercent } =
-      calculateScoreFromAnswers(answers);
-
+    const { correctCount, totalCount, scorePercent } = calculateScore(answers);
     const level = calculateLevel(scorePercent);
 
     const assessmentResult = await prisma.assessmentResult.create({
       data: {
-        userId,
+        userId: user.id,
         score: scorePercent,
         level,
         answersJson: JSON.stringify({
@@ -165,7 +155,7 @@ router.post("/submit", async (req, res) => {
 
     const updatedUser = await prisma.user.update({
       where: {
-        id: userId,
+        id: user.id,
       },
       data: {
         level,
@@ -192,10 +182,13 @@ router.post("/submit", async (req, res) => {
         correctCount,
         totalCount,
       },
-      user: updatedUser,
+      user: {
+        ...updatedUser,
+        role: updatedUser.role === "teacher" ? "teacher" : "student",
+      },
     });
   } catch (error) {
-    console.error(error);
+    console.error("Assessment submit error:", error);
 
     return res.status(500).json({
       error: "Failed to submit assessment.",
@@ -205,9 +198,9 @@ router.post("/submit", async (req, res) => {
 
 router.get("/latest", async (req, res) => {
   try {
-    const userId = await getCurrentUserId(req.headers.authorization);
+    const user = await getCurrentUser(req.headers.authorization);
 
-    if (!userId) {
+    if (!user) {
       return res.status(401).json({
         error: "Missing or invalid auth token.",
       });
@@ -215,7 +208,7 @@ router.get("/latest", async (req, res) => {
 
     const latestResult = await prisma.assessmentResult.findFirst({
       where: {
-        userId,
+        userId: user.id,
       },
       orderBy: {
         createdAt: "desc",
@@ -226,10 +219,10 @@ router.get("/latest", async (req, res) => {
       result: latestResult,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Assessment latest error:", error);
 
     return res.status(500).json({
-      error: "Failed to load assessment result.",
+      error: "Failed to load latest assessment result.",
     });
   }
 });

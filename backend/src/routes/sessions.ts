@@ -1,11 +1,56 @@
 import { Router } from "express";
+import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma";
 
-export const sessionsRouter = Router();
+const router = Router();
 
-sessionsRouter.get("/", async (_req, res) => {
+const AUTH_SECRET = process.env.AUTH_SECRET || "luna-dev-secret";
+
+function getAuthToken(headerValue: string | undefined) {
+  if (!headerValue) return null;
+
+  const [type, token] = headerValue.split(" ");
+
+  if (type !== "Bearer" || !token) return null;
+
+  return token;
+}
+
+function getAuthPayload(headerValue: string | undefined) {
+  const token = getAuthToken(headerValue);
+
+  if (!token) return null;
+
   try {
+    return jwt.verify(token, AUTH_SECRET) as {
+      userId: string;
+      role?: string;
+    };
+  } catch {
+    return null;
+  }
+}
+
+function getSessionWhereClause(payload: { userId: string; role?: string } | null) {
+  if (!payload) {
+    return {};
+  }
+
+  if (payload.role === "teacher") {
+    return {};
+  }
+
+  return {
+    userId: payload.userId,
+  };
+}
+
+router.get("/", async (req, res) => {
+  try {
+    const payload = getAuthPayload(req.headers.authorization);
+
     const sessions = await prisma.sessionResult.findMany({
+      where: getSessionWhereClause(payload),
       orderBy: {
         createdAt: "desc",
       },
@@ -19,19 +64,44 @@ sessionsRouter.get("/", async (_req, res) => {
             genreUk: true,
           },
         },
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            level: true,
+          },
+        },
       },
     });
 
-    res.json(sessions);
+    return res.json(sessions);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Failed to load session results" });
+
+    return res.status(500).json({
+      error: "Failed to load session results.",
+    });
   }
 });
 
-sessionsRouter.get("/summary", async (_req, res) => {
+router.get("/summary", async (req, res) => {
   try {
-    const sessions = await prisma.sessionResult.findMany();
+    const payload = getAuthPayload(req.headers.authorization);
+    const where = getSessionWhereClause(payload);
+
+    const sessions = await prisma.sessionResult.findMany({
+      where,
+      select: {
+        score: true,
+        accuracy: true,
+        totalWords: true,
+        correctWords: true,
+        mistakes: true,
+        durationSec: true,
+      },
+    });
 
     const totalSessions = sessions.length;
     const totalScore = sessions.reduce((sum, item) => sum + item.score, 0);
@@ -47,17 +117,19 @@ sessionsRouter.get("/summary", async (_req, res) => {
     );
 
     const bestScore =
-      totalSessions === 0 ? 0 : Math.max(...sessions.map((item) => item.score));
+      sessions.length === 0
+        ? 0
+        : Math.max(...sessions.map((item) => item.score));
 
     const averageAccuracy =
-      totalSessions === 0
+      sessions.length === 0
         ? 0
         : Math.round(
             sessions.reduce((sum, item) => sum + item.accuracy, 0) /
-              totalSessions
+              sessions.length
           );
 
-    res.json({
+    return res.json({
       totalSessions,
       totalScore,
       totalWords,
@@ -69,28 +141,78 @@ sessionsRouter.get("/summary", async (_req, res) => {
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Failed to load progress summary" });
+
+    return res.status(500).json({
+      error: "Failed to load progress summary.",
+    });
   }
 });
 
-sessionsRouter.post("/", async (req, res) => {
+router.post("/", async (req, res) => {
   try {
-    const result = await prisma.sessionResult.create({
+    const payload = getAuthPayload(req.headers.authorization);
+
+    const {
+      songId,
+      mode,
+      score,
+      accuracy,
+      totalWords,
+      correctWords,
+      mistakes,
+      durationSec,
+    } = req.body;
+
+    if (!songId || !mode) {
+      return res.status(400).json({
+        error: "songId and mode are required.",
+      });
+    }
+
+    const session = await prisma.sessionResult.create({
       data: {
-        songId: String(req.body.songId),
-        mode: String(req.body.mode ?? "dictation"),
-        score: Number(req.body.score ?? 0),
-        accuracy: Number(req.body.accuracy ?? 0),
-        totalWords: Number(req.body.totalWords ?? 0),
-        correctWords: Number(req.body.correctWords ?? 0),
-        mistakes: Number(req.body.mistakes ?? 0),
-        durationSec: req.body.durationSec ? Number(req.body.durationSec) : null,
+        userId: payload?.userId ?? null,
+        songId: String(songId),
+        mode: String(mode),
+        score: Number(score ?? 0),
+        accuracy: Number(accuracy ?? 0),
+        totalWords: Number(totalWords ?? 0),
+        correctWords: Number(correctWords ?? 0),
+        mistakes: Number(mistakes ?? 0),
+        durationSec:
+          durationSec === undefined || durationSec === null
+            ? null
+            : Number(durationSec),
+      },
+      include: {
+        song: {
+          select: {
+            id: true,
+            title: true,
+            level: true,
+            genreUk: true,
+          },
+        },
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            level: true,
+          },
+        },
       },
     });
 
-    res.status(201).json(result);
+    return res.status(201).json(session);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Failed to save session result" });
+
+    return res.status(500).json({
+      error: "Failed to save session result.",
+    });
   }
 });
+
+export default router;
