@@ -5,6 +5,7 @@ import { songsRouter } from "./routes/songs";
 import { sessionsRouter } from "./routes/sessions";
 import { generationRouter } from "./routes/generation";
 import { authRouter } from "./routes/auth";
+import assessmentRouter from "./routes/assessment";
 
 dotenv.config();
 
@@ -25,6 +26,7 @@ app.use("/api/songs", songsRouter);
 app.use("/api/sessions", sessionsRouter);
 app.use("/api/generation", generationRouter);
 app.use("/api/auth", authRouter);
+app.use("/api/assessment", assessmentRouter);
 
 app.listen(port, () => {
   console.log(`Luna API running on http://localhost:${port}`);
