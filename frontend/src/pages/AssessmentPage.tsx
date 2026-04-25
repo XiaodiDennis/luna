@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { LogoLink } from "../components/LogoLink";
 import { useAuth, type LunaUser } from "../lib/auth";
 
@@ -8,8 +8,8 @@ const API_BASE =
 
 type AssessmentQuestion = {
   id: string;
-  prompt: string;
   instruction: string;
+  prompt: string;
   options: string[];
   correctAnswer: string;
 };
@@ -104,12 +104,7 @@ const questions: AssessmentQuestion[] = [
     id: "q10",
     instruction: "Обери правильний варіант.",
     prompt: "By the time we arrived, the film ___.",
-    options: [
-      "started",
-      "has started",
-      "had started",
-      "was starting",
-    ],
+    options: ["started", "has started", "had started", "was starting"],
     correctAnswer: "had started",
   },
   {
@@ -140,9 +135,8 @@ export function AssessmentPage() {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorText, setErrorText] = useState("");
-  const [result, setResult] = useState<AssessmentSubmitResponse["result"] | null>(
-    null
-  );
+  const [result, setResult] =
+    useState<AssessmentSubmitResponse["result"] | null>(null);
 
   const answeredCount = useMemo(() => {
     return questions.filter((question) => answers[question.id]).length;
@@ -188,10 +182,10 @@ export function AssessmentPage() {
         }),
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        throw new Error(data.error || "Не вдалося зберегти результат тесту.");
+        throw new Error(data?.error || "Не вдалося зберегти результат тесту.");
       }
 
       const typedData = data as AssessmentSubmitResponse;
@@ -207,13 +201,32 @@ export function AssessmentPage() {
     }
   }
 
+  if (user?.role === "teacher") {
+    return <Navigate to="/teacher-dashboard" replace />;
+  }
+
   if (!user) {
     return (
       <main className="min-h-screen bg-slate-50 text-slate-950">
-        <section className="mx-auto flex min-h-screen max-w-3xl flex-col items-center justify-center px-8 text-center">
+        <header className="h-20 border-b border-slate-200 bg-white">
+          <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-8">
+            <LogoLink />
+
+            <Link
+              to="/login"
+              className="rounded-xl bg-sky-500 px-5 py-3 font-semibold text-white hover:bg-sky-600"
+            >
+              Увійти
+            </Link>
+          </div>
+        </header>
+
+        <section className="mx-auto flex min-h-[calc(100vh-80px)] max-w-3xl flex-col items-center justify-center px-8 text-center">
           <h1 className="text-4xl font-black">Потрібен вхід</h1>
-          <p className="mt-4 text-lg text-slate-600">
-            Щоб пройти оцінювання рівня, потрібно увійти або створити акаунт.
+
+          <p className="mt-4 text-lg leading-8 text-slate-600">
+            Щоб пройти оцінювання рівня, потрібно увійти або створити акаунт
+            учня.
           </p>
 
           <Link
@@ -227,7 +240,7 @@ export function AssessmentPage() {
     );
   }
 
-  if (user.role === "teacher") {
+  if (result) {
     return (
       <main className="min-h-screen bg-slate-50 text-slate-950">
         <header className="h-20 border-b border-slate-200 bg-white">
@@ -235,31 +248,11 @@ export function AssessmentPage() {
             <LogoLink />
 
             <Link
-              to="/teacher-dashboard"
+              to="/student-dashboard"
               className="rounded-xl bg-sky-500 px-5 py-3 font-semibold text-white hover:bg-sky-600"
             >
-              Кабінет викладача
+              Кабінет учня
             </Link>
-          </div>
-        </header>
-
-        <section className="mx-auto max-w-4xl px-8 py-16">
-          <h1 className="text-5xl font-black">Оцінювання потрібне лише учням</h1>
-          <p className="mt-5 text-lg leading-8 text-slate-600">
-            Викладацький акаунт не проходить мовне оцінювання. Для викладача
-            доступні AI-інструменти та майбутня аналітика учнів.
-          </p>
-        </section>
-      </main>
-    );
-  }
-
-  if (result) {
-    return (
-      <main className="min-h-screen bg-slate-50 text-slate-950">
-        <header className="h-20 border-b border-slate-200 bg-white">
-          <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-8">
-            <LogoLink />
           </div>
         </header>
 
@@ -290,6 +283,7 @@ export function AssessmentPage() {
           </div>
 
           <button
+            type="button"
             onClick={() => navigate("/student-dashboard")}
             className="mt-10 rounded-xl bg-sky-500 px-8 py-4 font-semibold text-white hover:bg-sky-600"
           >
@@ -306,7 +300,10 @@ export function AssessmentPage() {
         <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-8">
           <LogoLink />
 
-          <Link to="/student-dashboard" className="text-sm font-semibold text-slate-500 hover:text-sky-600">
+          <Link
+            to="/student-dashboard"
+            className="text-sm font-semibold text-slate-500 hover:text-sky-600"
+          >
             Кабінет учня
           </Link>
         </div>
@@ -347,7 +344,9 @@ export function AssessmentPage() {
                 Питання {index + 1}
               </div>
 
-              <p className="mt-2 text-sm text-slate-500">{question.instruction}</p>
+              <p className="mt-2 text-sm text-slate-500">
+                {question.instruction}
+              </p>
 
               <h2 className="mt-4 text-2xl font-black">{question.prompt}</h2>
 
@@ -383,6 +382,7 @@ export function AssessmentPage() {
 
         <div className="mt-10 flex justify-center">
           <button
+            type="button"
             onClick={submitAssessment}
             disabled={isSubmitting}
             className="rounded-xl bg-sky-500 px-8 py-4 font-semibold text-white shadow-md hover:bg-sky-600 disabled:bg-slate-300"
